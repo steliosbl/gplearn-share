@@ -356,7 +356,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             submatrix = submatrix.astype('int')
             # numbers = sorted(np.unique(submatrix))
             numbers = list(range(v))
-            ohe = OneHotEncoder(categories=[numbers],sparse=False)
+            ohe = OneHotEncoder(sparse_output=False) # SBL - sparse to sparse_output also don't hardcode categories
             submatrix = ohe.fit_transform(submatrix)
             ohe_matrices[k] = torch.from_numpy(submatrix).float().to(device)
         

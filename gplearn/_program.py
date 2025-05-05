@@ -1000,10 +1000,10 @@ class _Program(object):
                 callbacks = [lr_monitor,checkpoint_callback]
 
 
-            logger = pl.loggers.TensorBoardLogger("tb_logs", name=f"{self.timestamp}/{new_id}")
+            logger = pl.loggers.TensorBoardLogger("data/tb_logs", name=f"{self.timestamp}/{new_id}")
 
 
-            trainer = pl.Trainer(default_root_dir='./lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,auto_lr_find=True,enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,auto_scale_batch_size=False,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs'])
+            trainer = pl.Trainer(default_root_dir='data/lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,auto_lr_find=True,enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,auto_scale_batch_size=False,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs'])
             
             trainer.tune(model,train_dataloaders=train_dataloader)
             
