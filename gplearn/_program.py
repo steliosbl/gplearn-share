@@ -1003,9 +1003,18 @@ class _Program(object):
             logger = pl.loggers.TensorBoardLogger("data/tb_logs", name=f"{self.timestamp}/{new_id}")
 
 
-            trainer = pl.Trainer(default_root_dir='data/lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,auto_lr_find=True,enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,auto_scale_batch_size=False,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs'])
+            trainer = pl.Trainer(
+                default_root_dir='data/lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,
+                # auto_lr_find=True, # SBL - Doesn't exist in new versions of PL. 
+                # auto_scale_batch_size=False, # SBL - Doesn't exist in new versions of PL. 
+                enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs']
+            )
+
+            # SBL - New learning rate finder
+            lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
+            model.lr = lr.suggestion()
             
-            trainer.tune(model,train_dataloaders=train_dataloader)
+            # trainer.tune(model,train_dataloaders=train_dataloader) SBL - Doesn't exist in new versions of PL.
             
             trainer.fit(model=model,train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
