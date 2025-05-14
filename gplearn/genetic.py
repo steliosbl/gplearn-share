@@ -8,13 +8,15 @@ computer programs.
 # Author: Trevor Stephens <trevorstephens.com>
 #
 # License: BSD 3 clause
-
+import wandb # SBL
 import itertools
 from abc import ABCMeta, abstractmethod
 from time import time
 from warnings import warn
+from pathlib import Path # SBL
 
 import numpy as np
+import pandas as pd 
 from joblib import Parallel, delayed
 from scipy.stats import rankdata
 from sklearn.base import BaseEstimator
@@ -71,23 +73,24 @@ def _transform(program_list, categorical_variables):
     #         print(node)
     return [n.name if isinstance(n,_Function) else n for n in program_list]
 
-def check_cached_results(cached_results, program, categorical_variables):
-    program_list = program.program
-    new_program_list = _transform(program_list, categorical_variables)
-    hashable = tuple(new_program_list)
-    result = None
-    if hashable in cached_results:
-        result = cached_results[hashable]
-    return result
+# SBL: Deprecated 
+# def check_cached_results(cached_results, program, categorical_variables):
+#     program_list = program.program
+#     new_program_list = _transform(program_list, categorical_variables)
+#     hashable = tuple(new_program_list)
+#     result = None
+#     if hashable in cached_results:
+#         result = cached_results[hashable]
+#     return result
         
-def save_to_cached_results(cached_results, program, categorical_variables, score):
-    program_list = program.program
-    new_program_list = _transform(program_list, categorical_variables)
-    hashable = tuple(new_program_list)
-    cached_results[hashable] = score
-    print(len(cached_results))
-    print(f"Min error so far: {min(cached_results.items(),key=lambda x: x[1])[1]}")
-    # print(id(cached_results))
+# def save_to_cached_results(cached_results, program, categorical_variables, score):
+#     program_list = program.program
+#     new_program_list = _transform(program_list, categorical_variables)
+#     hashable = tuple(new_program_list)
+#     cached_results[hashable] = score
+#     print(len(cached_results))
+#     print(f"Min error so far: {min(cached_results.items(),key=lambda x: x[1])[1]}")
+#     # print(id(cached_results))
         
 
 def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, cached_results):
@@ -200,31 +203,34 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
 
         print(f"{parent_to_print} -> {genome_to_print['method']} -> {program}")
 
-        # Draw samples, using sample weights, and then fit
-        if sample_weight is None:
-            curr_sample_weight = np.ones((n_samples,))
-        else:
-            curr_sample_weight = sample_weight.copy()
-        oob_sample_weight = curr_sample_weight.copy()
+        # SBL: Moved to _parallel_train so that duplicates can be removed before fitting all SHAREs in parallel
 
-        indices, not_indices = program.get_all_indices(n_samples,
-                                                       max_samples,
-                                                       random_state)
+        # # Draw samples, using sample weights, and then fit 
+        # if sample_weight is None:
+        #     curr_sample_weight = np.ones((n_samples,))
+        # else:
+        #     curr_sample_weight = sample_weight.copy()
+        # oob_sample_weight = curr_sample_weight.copy()
 
-        curr_sample_weight[not_indices] = 0
-        oob_sample_weight[indices] = 0
-        categorical_variables = list(ohe_matrices.keys())
-        cached = check_cached_results(cached_results, program,categorical_variables)
-        if cached is not None:
-            print(f"Retrieved score for {program}")
-            program.raw_fitness_ = cached
-        else:
-            program.raw_fitness_ = program.raw_fitness(X, y, curr_sample_weight, ohe_matrices=ohe_matrices)
-            save_to_cached_results(cached_results, program, categorical_variables, program.raw_fitness_)
+        # indices, not_indices = program.get_all_indices(n_samples,
+        #                                                max_samples,
+        #                                                random_state)
 
-        if max_samples < n_samples:
-            # Calculate OOB fitness
-            program.oob_fitness_ = program.raw_fitness(X, y, oob_sample_weight, ohe_matrices=ohe_matrices)
+        # curr_sample_weight[not_indices] = 0
+        # oob_sample_weight[indices] = 0
+        # categorical_variables = list(ohe_matrices.keys())
+        # cached = check_cached_results(cached_results, program,categorical_variables)
+        # if cached is not None:
+        #     # print(f"Retrieved score for {program}")
+        #     program.raw_fitness_ = cached
+        #     program.extended_fitness_ = None
+        # else:
+        #     program.raw_fitness_, program.extended_fitness_ = program.raw_fitness(X, y, curr_sample_weight, ohe_matrices=ohe_matrices)
+        #     save_to_cached_results(cached_results, program, categorical_variables, program.raw_fitness_)
+
+        # if max_samples < n_samples: # SBL: This was non-functional in SHAREs as the sample_weight was always hard-coded to 1. TODO: Restore it
+        #     # Calculate OOB fitness
+        #     program.oob_fitness_, program.extended_oob_fitness_ = program.raw_fitness(X, y, oob_sample_weight, ohe_matrices=ohe_matrices)
 
         programs.append(program)
 
@@ -576,6 +582,13 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             # Print header fields
             self._verbose_reporter()
 
+        # SBL - Checkpoint saving initialisation
+        checkpoint_path = Path(self.optim_dict.get('checkpoint_folder') or 'checkpoints') / self.timestamp
+        if not checkpoint_path.exists():
+            checkpoint_path.mkdir(parents=True, exist_ok=True)
+        dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
+
+
         for gen in range(prior_generations, self.generations):
 
             start_time = time()
@@ -589,7 +602,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             n_jobs, n_programs, starts = _partition_estimators(
                 self.population_size, self.n_jobs)
             seeds = random_state.randint(MAX_INT, size=self.population_size)
-
+            start_idx = self.population_size * gen
             population = Parallel(backend='threading',n_jobs=n_jobs,
                                   verbose=int(self.verbose > 1))(
                 delayed(_parallel_evolve)(n_programs[i],
@@ -604,8 +617,43 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             # Reduce, maintaining order across different n_jobs
             population = list(itertools.chain.from_iterable(population))
 
+            # SBL: Add unique hash to each program and check uniqueness
+            seen_hashes, population_unique = set(self.cached_results.keys()), []
+            print(f'Seen hashes: ', seen_hashes)
+            for program in population:
+                program.hash = tuple(_transform(program.program, self.categorical_variables))
+                if program.hash not in seen_hashes:
+                    seen_hashes.add(program.hash)
+                    population_unique.append(program)
+                    print(f'Cached hash: {program.hash}')
+                
+            # SBL: Now train the shape functions and obtain fitness values
+            def _fit_single(program, idx): 
+                program.raw_fitness_, program.extended_fitness_ = program.raw_fitness(
+                    X, y, sample_weight, 
+                    checkpoint_folder=checkpoint_path, new_id=idx, 
+                    ohe_matrices=params['ohe_matrices']
+                )
+                return program
+
+            print(f"Unique programs to fit this generation: {len(population_unique)} \n", '\n'.join([str(_) for _ in population_unique]))
+        
+            population_unique = Parallel(backend='threading',n_jobs=n_jobs, verbose=int(self.verbose > 1))(
+                delayed(_fit_single)(program, start_idx + i) for i, program in enumerate(population_unique)
+            )
+            self.cached_results.update({program.hash: (program.raw_fitness_, program.extended_fitness_) for program in population_unique})
+
+            # SBL: Now recover the full population list with the cached results
+            for program in population:
+                program.raw_fitness_, program.extended_fitness_ = self.cached_results[program.hash]
+
             fitness = [program.raw_fitness_ for program in population]
+            extended_fitness = [program.extended_fitness_ for program in population_unique] # Unique programs only
             length = [program.length_ for program in population]
+
+            # SBL: Log extended fitness to file
+            dictionary = pd.concat((dictionary, pd.DataFrame(extended_fitness)))
+            dictionary.to_csv(checkpoint_path / 'dictionary.csv', index=False)
 
             parsimony_coefficient = None
             if self.parsimony_coefficient == 'auto':
@@ -654,6 +702,13 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             if self.verbose:
                 self._verbose_reporter(self.run_details_)
+
+            wandb.log({
+                'average fitness': self.run_details_['average_fitness'][-1],
+                'average length': self.run_details_['average_length'][-1],
+                'best fitness': self.run_details_['best_fitness'][-1],
+                'best length': self.run_details_['best_length'][-1],
+            }, step=self.run_details_['generation'][-1])
 
             # Check for early stopping
             if self._metric.greater_is_better:
@@ -708,7 +763,10 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             if self._program.model is None:
                 self._program.raw_fitness(X,
                                           y,
-                                          sample_weight,params['ohe_matrices'])
+                                          sample_weight,
+                                          checkpoint_path, 
+                                          self.generations * self.population_size + 1, 
+                                          params['ohe_matrices'])
 
         return self
     

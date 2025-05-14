@@ -159,7 +159,7 @@ class _Program(object):
                  program=None,
                  function_probs=None,
                  optim_dict=None,
-                 timestamp="unknown"):
+                 timestamp="unknown",):
 
         self.function_set = function_set
         self.arities = arities
@@ -884,7 +884,7 @@ class _Program(object):
                     return True
         return False
 
-    def raw_fitness(self, X, y, sample_weight, ohe_matrices={}):
+    def raw_fitness(self, X, y, sample_weight, checkpoint_folder=None, new_id=None, ohe_matrices={}):
         """Evaluate the raw fitness of the program according to X, y.
 
         Parameters
@@ -905,25 +905,28 @@ class _Program(object):
             The raw fitness of the program.
 
         """
-        if 'checkpoint_folder' in self.optim_dict:
-            checkpoint_folder = os.path.join(self.optim_dict['checkpoint_folder'],self.timestamp)
-        else:
-            checkpoint_folder = os.path.join("checkpoints",self.timestamp)
+        checkpoint_folder = checkpoint_folder or os.path.join("checkpoints",self.timestamp)
+        new_id = new_id or 0
+        # SBL: Added these as centrally-set params 
+        # if 'checkpoint_folder' in self.optim_dict:
+        #     checkpoint_folder = os.path.join(self.optim_dict['checkpoint_folder'],self.timestamp)
+        # else:
+        #     checkpoint_folder = os.path.join("checkpoints",self.timestamp) # SBL: Moved out into SymbolicRegressor
 
         if 'enable_progress_bar' in self.optim_dict:
             enable_progress_bar = self.optim_dict['enable_progress_bar']
         else:
             enable_progress_bar = False
 
-        # Check if the file checkpoints/{self.timestamp}/dictionary.csv exists
-        if os.path.isfile(f"{checkpoint_folder}/dictionary.csv"):
-            dictionary = pd.read_csv(f"{checkpoint_folder}/dictionary.csv",index_col=False)
-            new_id = dictionary['id'].max() + 1
-        else:
-            # Create a directory for the checkpoints
-            os.makedirs(checkpoint_folder)
-            dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
-            new_id = 0
+        # # Check if the file checkpoints/{self.timestamp}/dictionary.csv exists
+        # if os.path.isfile(f"{checkpoint_folder}/dictionary.csv"):
+        #     dictionary = pd.read_csv(f"{checkpoint_folder}/dictionary.csv",index_col=False)
+        #     new_id = dictionary['id'].max() + 1
+        # else:
+        #     # Create a directory for the checkpoints
+        #     os.makedirs(checkpoint_folder, exist_ok=True) # SBL: Allow for the checkpoint dir to already exist
+        #     dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
+        #     new_id = 0 # SBL: Moved out into SymbolicRegressor
         
         # Create train val split
 
@@ -1046,7 +1049,7 @@ class _Program(object):
 
         y_numpy = y.cpu().numpy()
         y_numpy = y_numpy[val_indices]
-        sample_weight = np.ones_like(y_numpy)
+        sample_weight = np.ones_like(y_numpy) # SBL: This messes up survival 
 
         raw_fitness = self.metric(y_numpy, y_pred, sample_weight)
         if self.optim_dict['task'] == 'regression':
@@ -1054,13 +1057,13 @@ class _Program(object):
         else:
             logits = _sigmoid(y_pred)
             r2 = roc_auc_score(y_numpy,logits)
-        print(f"{self} | raw_fitness: {raw_fitness}")
+        # print(f"{self} | raw_fitness: {raw_fitness}") # SBL
 
-        new_row = pd.DataFrame({"id":[new_id],"equation":[str(self)],"raw_fitness":[raw_fitness],"r2":[r2]})
-        dictionary = pd.concat([dictionary,new_row],ignore_index=True)
-        dictionary.to_csv(f"{checkpoint_folder}/dictionary.csv",index=False)
+        extended_fitness = {"id":new_id,"equation":str(self),"raw_fitness":raw_fitness,"r2":r2}
+        # dictionary = pd.concat([dictionary,new_row],ignore_index=True) # SBL: Moved out into SymbolicRegressor
+        # dictionary.to_csv(f"{checkpoint_folder}/dictionary.csv",index=False)
 
-        return raw_fitness
+        return raw_fitness, extended_fitness
 
     def fitness(self, parsimony_coefficient=None):
         """Evaluate the penalized fitness of the program according to X, y.
