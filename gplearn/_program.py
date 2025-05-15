@@ -14,7 +14,7 @@ import os
 
 import numpy as np
 from sklearn.utils.random import sample_without_replacement
-from sklearn.metrics import auc, r2_score, roc_auc_score
+from sklearn.metrics import r2_score, roc_auc_score
 
 from .functions import _Function, _sigmoid
 from .utils import check_random_state
@@ -22,23 +22,17 @@ from .functions import _function_map
 
 from functools import reduce
 
-from .model import Model, LitModel
+from .model import LitModel
 
 import pytorch_lightning as pl
 
-
 import torch
-
-import time
-
-from datetime import datetime
 
 import matplotlib.pyplot as plt
 
-import pandas as pd
+
 
 class _Program(object):
-
     """A program-like representation of the evolved program.
 
     This is the underlying data-structure used by the public classes in the
@@ -108,7 +102,7 @@ class _Program(object):
     program : list, optional (default=None)
         The flattened tree representation of the program. If None, a new naive
         random tree will be grown. If provided, it will be validated.
-    
+
     function_probs : list, optional (default=None)
         The probabilities of choosing functions during program generation.
         The numbers in the list should sum up to 1.
@@ -143,23 +137,25 @@ class _Program(object):
 
     """
 
-    def __init__(self,
-                 function_set,
-                 arities,
-                 init_depth,
-                 init_method,
-                 n_features,
-                 const_range,
-                 metric,
-                 p_point_replace,
-                 parsimony_coefficient,
-                 random_state,
-                 transformer=None,
-                 feature_names=None,
-                 program=None,
-                 function_probs=None,
-                 optim_dict=None,
-                 timestamp="unknown",):
+    def __init__(
+        self,
+        function_set,
+        arities,
+        init_depth,
+        init_method,
+        n_features,
+        const_range,
+        metric,
+        p_point_replace,
+        parsimony_coefficient,
+        random_state,
+        transformer=None,
+        feature_names=None,
+        program=None,
+        function_probs=None,
+        optim_dict=None,
+        timestamp="unknown",
+    ):
 
         self.function_set = function_set
         self.arities = arities
@@ -180,28 +176,38 @@ class _Program(object):
 
         if self.function_probs is None:
             # Uniform distribution over all functions
-            self.function_probs = np.ones(len(self.function_set)) / len(self.function_set)
+            self.function_probs = np.ones(len(self.function_set)) / len(
+                self.function_set
+            )
 
-        operator_indices = [i for i, fun in enumerate(self.function_set) if fun.name != 'shape']
+        operator_indices = [
+            i for i, fun in enumerate(self.function_set) if fun.name != "shape"
+        ]
         self.operator_set = [self.function_set[i] for i in operator_indices]
         self.operator_probs = self.function_probs[operator_indices]
         self.operator_probs /= np.sum(self.operator_probs)
 
         if self.program is not None:
             if not self.validate_program():
-                raise ValueError('The supplied program is incomplete.')
+                raise ValueError("The supplied program is incomplete.")
         else:
             # Create a naive random program
-            n_active_variables = self.random_skewed_integer(random_state,1,self.n_features+1)
-            active_variables = set(random_state.choice(list(range(self.n_features)),size=n_active_variables,replace=False))
-            self.program = self.build_program(random_state,variables=active_variables)
-        
+            n_active_variables = self.random_skewed_integer(
+                random_state, 1, self.n_features + 1
+            )
+            active_variables = set(
+                random_state.choice(
+                    list(range(self.n_features)), size=n_active_variables, replace=False
+                )
+            )
+            self.program = self.build_program(random_state, variables=active_variables)
+
         if not self.validate_unique_leaves():
             print(self.program)
-            raise ValueError('The supplied program does not have unique leaves')
+            raise ValueError("The supplied program does not have unique leaves")
 
         self.active_variables = self.find_active_variables()
-        
+
         self.raw_fitness_ = None
         self.fitness_ = None
         self.parents = None
@@ -211,13 +217,17 @@ class _Program(object):
 
     def random_function(self, random_state, only_operators=False):
         if not only_operators:
-            return random_state.choice(self.function_set,replace=True,p=self.function_probs)
+            return random_state.choice(
+                self.function_set, replace=True, p=self.function_probs
+            )
         else:
-            return random_state.choice(self.operator_set,replace=True,p=self.operator_probs)
-    
+            return random_state.choice(
+                self.operator_set, replace=True, p=self.operator_probs
+            )
+
     def is_shape_function(self, function):
         if isinstance(function, _Function):
-            if function.name == 'shape':
+            if function.name == "shape":
                 return True
             else:
                 return False
@@ -231,7 +241,7 @@ class _Program(object):
         for node in program:
             if isinstance(node, int):
                 active_variables.add(node)
-        
+
         return active_variables
 
     def validate_unique_leaves(self):
@@ -241,19 +251,17 @@ class _Program(object):
                 if node in active_variables:
                     return False
                 active_variables.add(node)
-        
+
         return True
 
     def is_fitting_necessary(self, categorical_variables):
-        return self.any_shapes() or self.any_categorical_variables(categorical_variables)
-    
+        return self.any_shapes or self.any_categorical_variables(categorical_variables)
+
     def random_skewed_integer(self, random_state, low, high):
         # low - inclusive, high - exclusive
-        ps = np.array(list(range(1,high-low+1)))
+        ps = np.array(list(range(1, high - low + 1)))
         ps = ps / ps.sum()
-        return random_state.choice(list(range(low,high)),p=ps)
-
-
+        return random_state.choice(list(range(low, high)), p=ps)
 
     def build_program(self, random_state, variables=None):
         """Build a naive random program.
@@ -262,7 +270,7 @@ class _Program(object):
         ----------
         random_state : RandomState instance
             The random number generator.
-        
+
         variables: set
             Set of integers corresponding to available variables.
             If None then all variables are considered
@@ -276,8 +284,8 @@ class _Program(object):
         if variables is None:
             variables = set([int(i) for i in range(self.n_features)])
 
-        if self.init_method == 'half and half':
-            method = ('full' if random_state.randint(2) else 'grow')
+        if self.init_method == "half and half":
+            method = "full" if random_state.randint(2) else "grow"
         else:
             method = self.init_method
 
@@ -287,7 +295,7 @@ class _Program(object):
         if len(variables) > 1:
             function = self.random_function(random_state)
         else:
-            function = _function_map['shape']
+            function = _function_map["shape"]
         program = [function]
         terminal_stack = [function.arity]
 
@@ -297,39 +305,48 @@ class _Program(object):
             possibilities = []
             if not self.is_shape_function(program[-1]):
                 # You can choose a shape function as the previous element was not a shape function
-                possibilities.append('shape')
-              
+                possibilities.append("shape")
+
             if n_planned_variables < len(variables):
                 # You can choose a binary operator as there are still some variables unaccounted for
-                possibilities.append('operator')
-            
+                possibilities.append("operator")
+
             if (n_planned_variables > 1) or (len(variables) == 1):
                 # You can choose a variable as this would not prevent other variables from being chosen in the future
-                possibilities.append('variable')
-            
-            if method == 'full': # If the method is 'full' then we choose functions as long as we can
+                possibilities.append("variable")
+
+            if (
+                method == "full"
+            ):  # If the method is 'full' then we choose functions as long as we can
 
                 # If the variable is the only option then choose variable
-                if (len(possibilities) == 1) and ('variable' in possibilities):
+                if (len(possibilities) == 1) and ("variable" in possibilities):
                     node = int(random_state.choice(list(variables)))
-                else: # If a function is possible then we choose a function
-                    if ('shape' in possibilities) and ('operator' in possibilities):
+                else:  # If a function is possible then we choose a function
+                    if ("shape" in possibilities) and ("operator" in possibilities):
                         node = self.random_function(random_state)
-                    elif 'operator' in possibilities:
+                    elif "operator" in possibilities:
                         node = self.random_function(random_state, only_operators=True)
-                    elif 'shape' in possibilities:
-                        node = _function_map['shape']
+                    elif "shape" in possibilities:
+                        node = _function_map["shape"]
                     else:
                         print(possibilities)
                         raise ValueError("That is weird. We should never get here")
 
-            elif method == 'grow': # If the method is 'grow' then we can choose a leaf earlier
-                node_name = random_state.choice(possibilities) # This is uniform, may be changed later TODO:
-                if node_name in ['shape','operator']:
-                    if 'operator' in possibilities:
-                        node = self.random_function(random_state, only_operators=(not ('shape' in possibilities)))
-                    elif 'shape' in possibilities:
-                        node = _function_map['shape']
+            elif (
+                method == "grow"
+            ):  # If the method is 'grow' then we can choose a leaf earlier
+                node_name = random_state.choice(
+                    possibilities
+                )  # This is uniform, may be changed later TODO:
+                if node_name in ["shape", "operator"]:
+                    if "operator" in possibilities:
+                        node = self.random_function(
+                            random_state,
+                            only_operators=(not ("shape" in possibilities)),
+                        )
+                    elif "shape" in possibilities:
+                        node = _function_map["shape"]
                     else:
                         print(possibilities)
                         print(node_name)
@@ -342,12 +359,12 @@ class _Program(object):
                 # The next node is a function
                 program.append(node)
                 terminal_stack.append(node.arity)
-                n_planned_variables += (node.arity - 1)
-            else: # it is a variable as we exclude numeric constants
+                n_planned_variables += node.arity - 1
+            else:  # it is a variable as we exclude numeric constants
                 node = int(node)
                 program.append(node)
                 variables.remove(node)
-                n_planned_variables -= 1 # as the plan was executed
+                n_planned_variables -= 1  # as the plan was executed
 
                 terminal_stack[-1] -= 1
                 while terminal_stack[-1] == 0:
@@ -355,43 +372,10 @@ class _Program(object):
                     if not terminal_stack:
                         return program
                     terminal_stack[-1] -= 1
-        
+
         # We should never get here
         raise ValueError("That is weird. We should never get here")
 
-        # while terminal_stack:
-        #     depth = len(terminal_stack)
-        #     choice = self.n_features + len(self.function_set)
-        #     choice = random_state.randint(choice)
-        #     # Determine if we are adding a function or terminal
-        #     if (depth < max_depth) and (method == 'full' or
-        #                                 choice <= len(self.function_set)):
-        #         function = random_state.randint(len(self.function_set))
-        #         function = self.function_set[function]
-        #         program.append(function)
-        #         terminal_stack.append(function.arity)
-        #     else:
-        #         # We need a terminal, add a variable or constant
-        #         if self.const_range is not None:
-        #             terminal = random_state.randint(self.n_features + 1)
-        #         else:
-        #             terminal = random_state.randint(self.n_features)
-        #         if terminal == self.n_features:
-        #             terminal = random_state.uniform(*self.const_range)
-        #             if self.const_range is None:
-        #                 # We should never get here
-        #                 raise ValueError('A constant was produced with '
-        #                                  'const_range=None.')
-        #         program.append(terminal)
-        #         terminal_stack[-1] -= 1
-        #         while terminal_stack[-1] == 0:
-        #             terminal_stack.pop()
-        #             if not terminal_stack:
-        #                 return program
-        #             terminal_stack[-1] -= 1
-
-        # # We should never get here
-        # return None
 
     def validate_program(self):
         """Rough check that the embedded program in the object is valid."""
@@ -409,32 +393,31 @@ class _Program(object):
     def __str__(self):
         """Overloads `print` output of the object to resemble a LISP tree."""
         terminals = [0]
-        output = ''
+        output = ""
         for i, node in enumerate(self.program):
             if isinstance(node, _Function):
                 terminals.append(node.arity)
-                output += node.name + '('
+                output += node.name + "("
             else:
                 if isinstance(node, int):
                     if self.feature_names is None:
-                        output += 'X%s' % node
+                        output += "X%s" % node
                     else:
                         output += self.feature_names[node]
                 else:
-                    output += '%.3f' % node
+                    output += "%.3f" % node
                 terminals[-1] -= 1
                 while terminals[-1] == 0:
                     terminals.pop()
                     terminals[-1] -= 1
-                    output += ')'
+                    output += ")"
                 if i != len(self.program) - 1:
-                    output += ', '
+                    output += ", "
         return output
 
-   
-
-
-    def get_argument_ranges_for_shape_functions(self, numerical_arguments, categorical_arguments):
+    def get_argument_ranges_for_shape_functions(
+        self, numerical_arguments, categorical_arguments
+    ):
         """
         numerical_arguments is a dictionary variable: (lower_bound, upper_bound)
         categorical_arguments is a dictionary: [categorical_value_1, ...]
@@ -442,13 +425,16 @@ class _Program(object):
 
         if self.is_fitting_necessary(categorical_arguments.keys()):
             if self.model is None:
-                raise ValueError("The equation was not fitted. Call raw_fitness function")
+                raise ValueError(
+                    "The equation was not fitted. Call raw_fitness function"
+                )
         else:
             print("No shape functions to plot")
             return
 
-        
-        program = self.model.program_list # this one contains the shape functions before categorical variables
+        program = (
+            self.model.program_list
+        )  # this one contains the shape functions before categorical variables
 
         # No need to deal with single node as the model requires fitting, so it has at least two nodes
 
@@ -459,7 +445,7 @@ class _Program(object):
                 return variable
             else:
                 raise ValueError("Not all ranges are provided")
-        
+
         def get_operator_range(fun, argument_ranges):
             division_threshold = 1e-3
 
@@ -469,76 +455,84 @@ class _Program(object):
                 c = argument_ranges[1][0]
                 d = argument_ranges[1][1]
 
-                if fun.name == 'add':
-                    return (a+c,b+d)
-                elif fun.name == 'sub':
-                    return (a-d,b-c)
-                elif fun.name == 'mul':
-                    return (min([a*c,a*d,b*c,b*d]), max([a*c,a*d,b*c,b*d]))
-                elif fun.name == 'div':
+                if fun.name == "add":
+                    return (a + c, b + d)
+                elif fun.name == "sub":
+                    return (a - d, b - c)
+                elif fun.name == "mul":
+                    return (
+                        min([a * c, a * d, b * c, b * d]),
+                        max([a * c, a * d, b * c, b * d]),
+                    )
+                elif fun.name == "div":
                     zero_possible = False
                     # intersect with (division_threshold, +inf)
                     if argument_ranges[1][1] < division_threshold:
-                        return (0.0,0.0)
+                        return (0.0, 0.0)
                     elif argument_ranges[1][0] < division_threshold:
-                        new_range = (division_threshold,argument_ranges[1][1])
+                        new_range = (division_threshold, argument_ranges[1][1])
                         zero_possible = True
                     else:
                         new_range = argument_ranges[1]
                     c = new_range[0]
                     d = new_range[1]
                     if zero_possible:
-                        return (min([a/c,a/d,b/c,b/d,0]),max([a/c,a/d,b/c,b/d,0]))
+                        return (
+                            min([a / c, a / d, b / c, b / d, 0]),
+                            max([a / c, a / d, b / c, b / d, 0]),
+                        )
                     else:
-                        return (min([a/c,a/d,b/c,b/d]),max([a/c,a/d,b/c,b/d]))
+                        return (
+                            min([a / c, a / d, b / c, b / d]),
+                            max([a / c, a / d, b / c, b / d]),
+                        )
 
         def get_shape_range(shape_index, argument_range, steps=10000):
             shape_function = self.model.shape_functions[shape_index]
 
-            shape_function.to(torch.device('cpu'))
+            shape_function.to(torch.device("cpu"))
 
-            t = torch.linspace(argument_range[0],argument_range[1],steps)
-            
+            t = torch.linspace(argument_range[0], argument_range[1], steps)
+
             pred = shape_function(t)
             lower = torch.min(pred).item()
             upper = torch.max(pred).item()
 
-            return (lower,upper)
+            return (lower, upper)
 
         def get_categorical_range(categorical_variable):
             weights = self.model.cat_shape_functions[str(categorical_variable)]
             lower = torch.min(weights)
             upper = torch.max(weights)
-            return (lower,upper)
+            return (lower, upper)
 
         stack = []
 
         shape_counter = 0
         shape_ranges = {}
 
-
         for node in program:
             if isinstance(node, _Function):
-                if node.name == 'shape':
-                    stack.append([(shape_counter,node)])
+                if node.name == "shape":
+                    stack.append([(shape_counter, node)])
                     shape_counter += 1
                 else:
-                    stack.append([(-1,node)])
-            else: # it's a variable 
+                    stack.append([(-1, node)])
+            else:  # it's a variable
                 stack[-1].append(get_variable_range(node))
 
             while stack[-1][0][1].arity == len(stack[-1][1:]):
                 f = stack[-1][0][1]
                 index = stack[-1][0][0]
-                if f.name == 'shape':
-                    if not isinstance(stack[-1][1],tuple):
+                if f.name == "shape":
+                    if not isinstance(stack[-1][1], tuple):
                         intermediate_range = get_categorical_range(stack[-1][1])
                     else:
-                        intermediate_range = get_shape_range(index,stack[-1][1])
+                        intermediate_range = get_shape_range(index, stack[-1][1])
                         shape_ranges[index] = stack[-1][1]
                 else:
-                    intermediate_range = get_operator_range(f,stack[-1][1:])
-                
+                    intermediate_range = get_operator_range(f, stack[-1][1:])
+
                 if len(stack) != 1:
                     stack.pop()
                     stack[-1].append(intermediate_range)
@@ -546,19 +540,22 @@ class _Program(object):
                     print(shape_ranges)
                     return shape_ranges
 
-    
-    def plot_shape_functions(self, numerical_arguments, categorical_arguments, steps=1000):
+    def plot_shape_functions(
+        self, numerical_arguments, categorical_arguments, steps=1000
+    ):
 
-        shape_arg_ranges = self.get_argument_ranges_for_shape_functions(numerical_arguments, categorical_arguments)
+        shape_arg_ranges = self.get_argument_ranges_for_shape_functions(
+            numerical_arguments, categorical_arguments
+        )
 
         shapes = self.model.shape_functions
 
         for i, shape in enumerate(shapes):
-            t = torch.linspace(shape_arg_ranges[i][0],shape_arg_ranges[i][1],steps)
-            shape.to(torch.device('cpu'))
+            t = torch.linspace(shape_arg_ranges[i][0], shape_arg_ranges[i][1], steps)
+            shape.to(torch.device("cpu"))
             with torch.no_grad():
                 y = shape(t).flatten()
-                plt.plot(t.numpy(),y.numpy())
+                plt.plot(t.numpy(), y.numpy())
                 plt.show()
 
     def plot_shape_functions_given_ranges(self, shape_arg_ranges, axs, steps=1000):
@@ -567,97 +564,12 @@ class _Program(object):
         # assert len(shapes) == len(axs)
 
         for i, shape in enumerate(shapes):
-            t = torch.linspace(shape_arg_ranges[i][0],shape_arg_ranges[i][1],steps)
-            shape.to(torch.device('cpu'))
+            t = torch.linspace(shape_arg_ranges[i][0], shape_arg_ranges[i][1], steps)
+            shape.to(torch.device("cpu"))
             with torch.no_grad():
                 y = shape(t).flatten()
-                axs[i].plot(t.numpy(),y.numpy())
+                axs[i].plot(t.numpy(), y.numpy())
                 # plt.show()
-
-
-    # def plot_shape_functions_based_on_data(self, data, steps=1000):
-
-    #     if self.keys is None:
-    #         self.keys = []
-        
-    #     if self.is_fitting_necessary(self.keys):
-    #         if self.model is None:
-    #             raise ValueError("The equation was not fitted. Call raw_fitness function")
-    #     else:
-    #         print("No shape functions to plot")
-    #         return
-
-        
-    #     program = self.model.program_list # this one contains the shape functions before categorical variables
-
-    #     # No need to deal with single node as the model requires fitting, so it has at least two nodes
-        
-    #     stack = []
-
-    #     shape_counter = 0
-    #     shape_ranges = {}
-
-    #     def get_variable_range(variable):
-    #         if variable in self.keys:
-    #             return variable
-    #         return (data[:,variable].min(),data[:,variable].max())
-        
-    #     def get_shape_range(shape_index, argument_range, steps=10000):
-    #         shape_function = self.model.shape_functions[shape_index]
-
-    #         shape_function.to(torch.device('cpu'))
-
-    #         t = torch.linspace(argument_range[0],argument_range[1],steps)
-            
-    #         pred = shape_function(t)
-    #         lower = torch.min(pred).item()
-    #         upper = torch.max(pred).item()
-
-    #         return (lower,upper)
-
-    #     def get_categorical_range(categorical_variable):
-    #         weights = self.model.cat_shape_functions[str(categorical_variable)]
-    #         lower = torch.min(weights)
-    #         upper = torch.max(weights)
-    #         return (lower,upper)
-
-
-    #     for i, node in enumerate(program):
-    #         # print(node)
-    #         # print(type(node))
-    #         if isinstance(node, _Function):
-    #             stack.append([(shape_counter,node)])
-    #             if node.name == 'shape':
-    #                 next_node = self.program_list[i+1] 
-    #                 if isinstance(next_node, int):
-    #                     if next_node not in self.categorical_variables:
-    #                         shape_counter += 1
-    #                 else:
-    #                     shape_counter += 1
-                    
-    #         else: # it's a variable 
-    #             stack[-1].append(get_variable_range(node))
-
-    #         while stack[-1][0][1].arity == len(stack[-1][1:]):
-    #             f = stack[-1][0][1]
-    #             index = stack[-1][0][0]
-    #             if f.name == 'shape':
-    #                 if not isinstance(stack[-1][1],tuple):
-    #                     # If it's not a tuple, it's a categorical variable. It should be an integer
-    #                     intermediate_range = get_categorical_range(stack[-1][1])
-    #                 else:
-    #                     intermediate_range = get_shape_range(index,stack[-1][1])
-    #                     shape_ranges[index] = stack[-1][1]
-    #             else:
-    #                 intermediate_range = get_operator_range(f,stack[-1][1:])
-                
-    #             if len(stack) != 1:
-    #                 stack.pop()
-    #                 stack[-1].append(intermediate_range)
-    #             else:
-    #                 print(shape_ranges)
-    #                 return shape_ranges
-
 
     def export_graphviz(self, fade_nodes=None):
         """Returns a string, Graphviz script for visualizing the program.
@@ -677,42 +589,42 @@ class _Program(object):
         terminals = []
         if fade_nodes is None:
             fade_nodes = []
-        output = 'digraph program {\nnode [style=filled]\n'
+        output = "digraph program {\nnode [style=filled]\n"
         for i, node in enumerate(self.program):
-            fill = '#cecece'
+            fill = "#cecece"
             if isinstance(node, _Function):
                 if i not in fade_nodes:
-                    fill = '#136ed4'
+                    fill = "#136ed4"
                 terminals.append([node.arity, i])
-                output += ('%d [label="%s", fillcolor="%s"] ;\n'
-                           % (i, node.name, fill))
+                output += '%d [label="%s", fillcolor="%s"] ;\n' % (i, node.name, fill)
             else:
                 if i not in fade_nodes:
-                    fill = '#60a6f6'
+                    fill = "#60a6f6"
                 if isinstance(node, int):
                     if self.feature_names is None:
-                        feature_name = 'X%s' % node
+                        feature_name = "X%s" % node
                     else:
                         feature_name = self.feature_names[node]
-                    output += ('%d [label="%s", fillcolor="%s"] ;\n'
-                               % (i, feature_name, fill))
+                    output += '%d [label="%s", fillcolor="%s"] ;\n' % (
+                        i,
+                        feature_name,
+                        fill,
+                    )
                 else:
-                    output += ('%d [label="%.3f", fillcolor="%s"] ;\n'
-                               % (i, node, fill))
+                    output += '%d [label="%.3f", fillcolor="%s"] ;\n' % (i, node, fill)
                 if i == 0:
                     # A degenerative program of only one node
-                    return output + '}'
+                    return output + "}"
                 terminals[-1][0] -= 1
                 terminals[-1].append(i)
                 while terminals[-1][0] == 0:
-                    output += '%d -> %d ;\n' % (terminals[-1][1],
-                                                terminals[-1][-1])
+                    output += "%d -> %d ;\n" % (terminals[-1][1], terminals[-1][-1])
                     terminals[-1].pop()
                     if len(terminals[-1]) == 2:
                         parent = terminals[-1][-1]
                         terminals.pop()
                         if not terminals:
-                            return output + '}'
+                            return output + "}"
                         terminals[-1].append(parent)
                         terminals[-1][0] -= 1
 
@@ -737,22 +649,23 @@ class _Program(object):
     def _length(self):
         """Calculates the number of functions and terminals in the program."""
         return len(self.program)
-    
-    def get_shape_ranges(self,X,ohe_matrices={}):
 
-        if self.is_fitting_necessary(ohe_matrices.keys()) :
+    def get_shape_ranges(self, X, ohe_matrices={}):
+
+        if self.is_fitting_necessary(ohe_matrices.keys()):
             if self.model is None:
                 raise ValueError("The model was not trained")
-            
+
             ohe_matrices_list = [ohe_matrices[k] for k in self.keys]
             with torch.no_grad():
-                shape_ranges = self.model.evaluate_equation(X,ohe_matrices_list,return_shape_ranges=True)
+                shape_ranges = self.model.evaluate_equation(
+                    X, ohe_matrices_list, return_shape_ranges=True
+                )
 
             return shape_ranges
         else:
             print("No shape functions")
             return {}
-
 
     def execute(self, X, ohe_matrices={}):
         """Execute the program according to X.
@@ -769,18 +682,27 @@ class _Program(object):
             The result of executing the program on X.
 
         """
-        if self.is_fitting_necessary(ohe_matrices.keys()) :
+        if self.is_fitting_necessary(ohe_matrices.keys()):
             if self.model is None:
                 raise ValueError("The model was not trained")
 
-            dataset = torch.utils.data.TensorDataset(X,*[ohe_matrices[k] for k in self.keys])
-            pred_dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'])
-            
-            accelerator = "gpu" if self.optim_dict['device'] == 'cuda' else 'cpu'
+            dataset = torch.utils.data.TensorDataset(
+                X, *[ohe_matrices[k] for k in self.keys]
+            )
+            pred_dataloader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size=self.optim_dict["batch_size"],
+                shuffle=False,
+                num_workers=self.optim_dict["num_workers_dataloader"],
+            )
 
-            trainer = pl.Trainer(deterministic=True,devices=1,accelerator=accelerator)
-            
-            y_pred = torch.concat(trainer.predict(self.model, pred_dataloader)).cpu().numpy()
+            accelerator = "gpu" if self.optim_dict["device"] == "cuda" else "cpu"
+
+            trainer = pl.Trainer(deterministic=True, devices=1, accelerator=accelerator)
+
+            y_pred = (
+                torch.concat(trainer.predict(self.model, pred_dataloader)).cpu().numpy()
+            )
 
             # y_pred = self.model.predict(X,ohe_matrices,device=self.optim_dict['device']).cpu().detach().numpy()
             return y_pred
@@ -806,9 +728,14 @@ class _Program(object):
                 while len(apply_stack[-1]) == apply_stack[-1][0].arity + 1:
                     # Apply functions that have sufficient arguments
                     function = apply_stack[-1][0]
-                    terminals = [np.repeat(t, X.shape[0]) if isinstance(t, float)
-                                else X[:, t] if isinstance(t, int)
-                                else t for t in apply_stack[-1][1:]]
+                    terminals = [
+                        (
+                            np.repeat(t, X.shape[0])
+                            if isinstance(t, float)
+                            else X[:, t] if isinstance(t, int) else t
+                        )
+                        for t in apply_stack[-1][1:]
+                    ]
                     intermediate_result = function(*terminals)
                     if len(apply_stack) != 1:
                         apply_stack.pop()
@@ -819,8 +746,7 @@ class _Program(object):
             # We should never get here
             return None
 
-    def get_all_indices(self, n_samples=None, max_samples=None,
-                        random_state=None):
+    def get_all_indices(self, n_samples=None, max_samples=None, random_state=None):
         """Get the indices on which to evaluate the fitness of a program.
 
         Parameters
@@ -844,8 +770,10 @@ class _Program(object):
 
         """
         if self._indices_state is None and random_state is None:
-            raise ValueError('The program has not been evaluated for fitness '
-                             'yet, indices not available.')
+            raise ValueError(
+                "The program has not been evaluated for fitness "
+                "yet, indices not available."
+            )
 
         if n_samples is not None and self._n_samples is None:
             self._n_samples = n_samples
@@ -860,7 +788,8 @@ class _Program(object):
         not_indices = sample_without_replacement(
             self._n_samples,
             self._n_samples - self._max_samples,
-            random_state=indices_state)
+            random_state=indices_state,
+        )
         sample_counts = np.bincount(not_indices, minlength=self._n_samples)
         indices = np.where(sample_counts == 0)[0]
 
@@ -870,10 +799,11 @@ class _Program(object):
         """Get the indices used to measure the program's fitness."""
         return self.get_all_indices()[0]
 
+    @property
     def any_shapes(self):
         for node in self.program:
             if isinstance(node, _Function):
-                if node.name == 'shape':
+                if node.name == "shape":
                     return True
         return False
 
@@ -884,7 +814,159 @@ class _Program(object):
                     return True
         return False
 
-    def raw_fitness(self, X, y, sample_weight, checkpoint_folder=None, new_id=None, ohe_matrices={}):
+    def fit_predict(
+        self,
+        X_train,
+        y_train,
+        X_valid,
+        y_valid,
+        sample_weight,
+        new_id=0,
+        ohe_matrices={},
+    ):
+        """Train the shape functions of the program according to X, y.
+
+        Parameters
+        ----------
+        X : {array-like}, shape = [n_samples, n_features]
+            Training vectors, where n_samples is the number of samples and
+            n_features is the number of features.
+
+        y : array-like, shape = [n_samples]
+            Target values.
+
+        sample_weight : array-like, shape = [n_samples]
+            Weights applied to individual samples.
+
+        new_id : int, optional
+            The id of the new program, to index checkpoints with.
+
+        Returns
+        -------
+        self: _Program
+
+        """
+
+        checkpoint_folder = self.optim_dict.get("checkpoint_path") or os.path.join(
+            "checkpoints", self.timestamp
+        )
+        enable_progress_bar = self.optim_dict.get("enable_progress_bar") or False
+
+        self.keys = sorted(ohe_matrices.keys())
+        self.categorical_variables_dict = {
+            k: ohe_matrices[k].shape[1] for k in self.keys
+        }
+
+        model = LitModel(self, seed=0)
+
+        train_dataset, val_dataset = (
+            torch.utils.data.TensorDataset(
+                X_train, *[ohe_matrices[k] for k in self.keys], y_train
+            ),
+            torch.utils.data.TensorDataset(
+                X_valid, *[ohe_matrices[k] for k in self.keys], y_valid
+            ),
+        )
+
+        gen = torch.Generator()
+        gen.manual_seed(self.optim_dict["seed"])
+
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.optim_dict["batch_size"],
+            shuffle=True,
+            num_workers=self.optim_dict["num_workers_dataloader"],
+            generator=gen,
+        )
+        val_dataloader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=self.optim_dict["batch_size"],
+            shuffle=False,
+            num_workers=self.optim_dict["num_workers_dataloader"],
+            generator=gen,
+        )
+
+        accelerator = "gpu" if self.optim_dict["device"] == "cuda" else "cpu"
+
+        # torch.set_float32_matmul_precision("medium")
+        patience = self.optim_dict.get("patience", 10)
+        check_val_every_n_epoch = self.optim_dict.get("check_val_every_n_epoch", 10)
+
+        early_stopping = pl.callbacks.EarlyStopping(
+            "val_loss", patience=patience, min_delta=self.optim_dict["tol"]
+        )
+        lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval="epoch")
+
+        early_stopping_val_loss = self.optim_dict.get("early_stopping_val_loss", True)
+
+        if early_stopping_val_loss:
+            checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                monitor="val_loss",
+                dirpath=checkpoint_folder,
+                filename=f"{new_id}-best_val_loss",
+                save_top_k=1,
+                mode="min",
+                auto_insert_metric_name=True,
+            )
+            callbacks = [early_stopping, lr_monitor, checkpoint_callback]
+        else:
+            checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                monitor="train_loss",
+                dirpath=checkpoint_folder,
+                filename=f"{new_id}-best_val_loss",
+                save_top_k=1,
+                mode="min",
+                auto_insert_metric_name=True,
+            )
+            callbacks = [lr_monitor, checkpoint_callback]
+
+        logger = pl.loggers.TensorBoardLogger(
+            "data/tb_logs", name=f"{self.timestamp}/{new_id}"
+        )
+
+        trainer = pl.Trainer(
+            default_root_dir="data/lightning_logs",
+            logger=logger,
+            deterministic=True,
+            devices=1,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            callbacks=callbacks,
+            # auto_lr_find=True, # SBL - Doesn't exist in new versions of PL.
+            # auto_scale_batch_size=False, # SBL - Doesn't exist in new versions of PL.
+            enable_model_summary=False,
+            enable_progress_bar=enable_progress_bar,
+            log_every_n_steps=1,
+            accelerator=accelerator,
+            max_epochs=self.optim_dict["max_n_epochs"],
+        )
+
+        # SBL - New learning rate finder
+        lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
+        model.lr = lr.suggestion()
+
+        trainer.fit(
+            model=model,
+            train_dataloaders=train_dataloader,
+            val_dataloaders=val_dataloader,
+        )
+
+        # Load the best model
+        model = LitModel.load_from_checkpoint(
+            f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt", program=self
+        )
+
+        self.model = model
+
+        keep_the_model = self.optim_dict.get("keep_models") or False
+        if not keep_the_model:
+            # Delete the model
+            os.remove(f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt")
+
+        return torch.concat(trainer.predict(model, val_dataloader)).cpu().numpy()
+
+    def raw_fitness(
+        self, X, y, sample_weight, checkpoint_folder=None, new_id=None, ohe_matrices={}
+    ):
         """Evaluate the raw fitness of the program according to X, y.
 
         Parameters
@@ -905,33 +987,12 @@ class _Program(object):
             The raw fitness of the program.
 
         """
-        checkpoint_folder = checkpoint_folder or os.path.join("checkpoints",self.timestamp)
-        new_id = new_id or 0
-        # SBL: Added these as centrally-set params 
-        # if 'checkpoint_folder' in self.optim_dict:
-        #     checkpoint_folder = os.path.join(self.optim_dict['checkpoint_folder'],self.timestamp)
-        # else:
-        #     checkpoint_folder = os.path.join("checkpoints",self.timestamp) # SBL: Moved out into SymbolicRegressor
 
-        if 'enable_progress_bar' in self.optim_dict:
-            enable_progress_bar = self.optim_dict['enable_progress_bar']
-        else:
-            enable_progress_bar = False
+        train_size = int(0.8 * X.shape[0])
 
-        # # Check if the file checkpoints/{self.timestamp}/dictionary.csv exists
-        # if os.path.isfile(f"{checkpoint_folder}/dictionary.csv"):
-        #     dictionary = pd.read_csv(f"{checkpoint_folder}/dictionary.csv",index_col=False)
-        #     new_id = dictionary['id'].max() + 1
-        # else:
-        #     # Create a directory for the checkpoints
-        #     os.makedirs(checkpoint_folder, exist_ok=True) # SBL: Allow for the checkpoint dir to already exist
-        #     dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
-        #     new_id = 0 # SBL: Moved out into SymbolicRegressor
-        
         # Create train val split
-
         # Create indices for train and val using numpy generator
-        gen = np.random.default_rng(self.optim_dict['seed'])
+        gen = np.random.default_rng(self.optim_dict["seed"])
         indices = np.arange(X.shape[0])
         gen.shuffle(indices)
         train_size = int(0.8 * X.shape[0])
@@ -939,129 +1000,43 @@ class _Program(object):
         val_indices = indices[train_size:]
 
         if not self.is_fitting_necessary(ohe_matrices.keys()):
-            y_pred = self.execute(X[val_indices,:])
-        else: # You need to do training
-            
-            # model = Model(self,self.optim_dict,seed=0)
+            y_pred = self.execute(X[val_indices, :])
+        else:  # You need to do training
+            X_train, X_valid = X[train_indices, :], X[val_indices, :]
+            y_train, y_valid = y[train_indices], y[val_indices]
 
-            # model.train(X,y,ohe_matrices,device=self.optim_dict['device'])
-            # # t1 = time.time()
-            # y_pred = model.predict(X,ohe_matrices,device=self.optim_dict['device']).cpu().detach().numpy()
-            # # t2 = time.time()
-            # # print(f"Whole predicting: {t2-t1}")
-
-            self.keys = sorted(ohe_matrices.keys())
-            self.categorical_variables_dict = {k:ohe_matrices[k].shape[1] for k in self.keys}
-
-            model = LitModel(self,seed=0)
-
-            dataset = torch.utils.data.TensorDataset(X,*[ohe_matrices[k] for k in self.keys],y)
-
-            train_size = int(0.8 * len(dataset))
-            val_size = len(dataset) - train_size
-
-            gen = torch.Generator()
-            gen.manual_seed(self.optim_dict['seed'])
-
-            # Subsample using train and val indices
-            train_dataset = torch.utils.data.Subset(dataset,train_indices)
-            val_dataset = torch.utils.data.Subset(dataset,val_indices)
-        
-            # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size], generator=gen)
-
-            train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.optim_dict['batch_size'], shuffle=True, num_workers=self.optim_dict['num_workers_dataloader'],generator=gen)
-            val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'],generator=gen)
-            
-            accelerator = "gpu" if self.optim_dict['device'] == 'cuda' else 'cpu'
-
-            # torch.set_float32_matmul_precision("medium")
-            patience = self.optim_dict.get('patience',10)
-            check_val_every_n_epoch = self.optim_dict.get('check_val_every_n_epoch',10)
-
-            early_stopping = pl.callbacks.EarlyStopping('val_loss',patience=patience,min_delta=self.optim_dict['tol'])
-            lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
-            
-            early_stopping_val_loss = self.optim_dict.get('early_stopping_val_loss',True)
-
-            if early_stopping_val_loss:
-                checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                                    monitor='val_loss',
-                                    dirpath=checkpoint_folder,
-                                    filename=f'{new_id}-best_val_loss',
-                                    save_top_k=1,
-                                    mode='min',
-                                    auto_insert_metric_name=True)
-                callbacks = [early_stopping,lr_monitor,checkpoint_callback]
-            else:
-                checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                                    monitor='train_loss',
-                                    dirpath=checkpoint_folder,
-                                    filename=f'{new_id}-best_val_loss',
-                                    save_top_k=1,
-                                    mode='min',
-                                    auto_insert_metric_name=True)
-                callbacks = [lr_monitor,checkpoint_callback]
-
-
-            logger = pl.loggers.TensorBoardLogger("data/tb_logs", name=f"{self.timestamp}/{new_id}")
-
-
-            trainer = pl.Trainer(
-                default_root_dir='data/lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,
-                # auto_lr_find=True, # SBL - Doesn't exist in new versions of PL. 
-                # auto_scale_batch_size=False, # SBL - Doesn't exist in new versions of PL. 
-                enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs']
+            y_pred = self.fit_predict(
+                X_train,
+                y_train,
+                X_valid,
+                y_valid,
+                sample_weight,
+                new_id=new_id,
+                ohe_matrices=ohe_matrices,
             )
-
-            # SBL - New learning rate finder
-            lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
-            model.lr = lr.suggestion()
-            
-            # trainer.tune(model,train_dataloaders=train_dataloader) SBL - Doesn't exist in new versions of PL.
-            
-            trainer.fit(model=model,train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-
-            # Load the best model
-            model = LitModel.load_from_checkpoint(f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt", program=self)
-
-            self.model = model
-
-            # val_loss = trainer.callback_metrics['val_loss'].item()
-            # print(f"val loss: {val_loss}")
-
-            # pred_dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'])
-
-            y_pred = torch.concat(trainer.predict(model, val_dataloader)).cpu().numpy()
-
-            if 'keep_models' in self.optim_dict.keys():
-                keep_the_model = self.optim_dict['keep_models']
-            else:
-                keep_the_model = False
-            if not keep_the_model:
-                # Delete the model
-                os.remove(f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt")
-      
-            
-            # return val_loss
 
         if self.transformer:
             y_pred = self.transformer(y_pred)
 
         y_numpy = y.cpu().numpy()
         y_numpy = y_numpy[val_indices]
-        sample_weight = np.ones_like(y_numpy) # SBL: This messes up survival 
+
+        if sample_weight is None:
+            sample_weight = np.ones_like(y_numpy)
 
         raw_fitness = self.metric(y_numpy, y_pred, sample_weight)
-        if self.optim_dict['task'] == 'regression':
+        if self.optim_dict["task"] == "regression":
             r2 = r2_score(y_numpy, y_pred)
         else:
             logits = _sigmoid(y_pred)
-            r2 = roc_auc_score(y_numpy,logits)
-        # print(f"{self} | raw_fitness: {raw_fitness}") # SBL
+            r2 = roc_auc_score(y_numpy, logits)
 
-        extended_fitness = {"id":new_id,"equation":str(self),"raw_fitness":raw_fitness,"r2":r2}
-        # dictionary = pd.concat([dictionary,new_row],ignore_index=True) # SBL: Moved out into SymbolicRegressor
-        # dictionary.to_csv(f"{checkpoint_folder}/dictionary.csv",index=False)
+        extended_fitness = {
+            "id": new_id,
+            "equation": str(self),
+            "raw_fitness": raw_fitness,
+            "r2": r2,
+        }
 
         return raw_fitness, extended_fitness
 
@@ -1093,12 +1068,12 @@ class _Program(object):
         node = program[0]
         if isinstance(node, int):
             if node in variables:
-                return [(0,'leaf')]
+                return [(0, "leaf")]
             else:
                 return []
 
         # each element of stack is a tuple (a,b,c) where a is the index in program, b is the arity, c is a list of sets of active variables      stack = []
-        
+
         stack = []
         subtrees = []
 
@@ -1106,30 +1081,29 @@ class _Program(object):
 
             if isinstance(node, _Function):
                 stack.append((index, node.arity, []))
-            else: # it's a variable
+            else:  # it's a variable
                 stack[-1][2].append({node})
                 if node in variables:
-                    subtrees.append((index, 'leaf'))
+                    subtrees.append((index, "leaf"))
 
             while len(stack[-1][2]) == stack[-1][1]:
                 active_variables = reduce(lambda x, y: x.union(y), stack[-1][2])
                 if active_variables.issubset(variables):
-                        start = stack[-1][0]
-                        if stack[-1][1] == 1:
-                            function_type = 'single'
-                        else:
-                            function_type = 'operator'
-                        subtrees.append((start,function_type))
-                
+                    start = stack[-1][0]
+                    if stack[-1][1] == 1:
+                        function_type = "single"
+                    else:
+                        function_type = "operator"
+                    subtrees.append((start, function_type))
+
                 if len(stack) != 1:
                     stack.pop()
                     stack[-1][2].append(active_variables)
                 else:
                     return subtrees
-        
-        # We should never get here
-        return None 
 
+        # We should never get here
+        return None
 
     def get_subtree(self, random_state, program=None, variables=None):
         """Get a random subtree from the program.
@@ -1155,16 +1129,18 @@ class _Program(object):
         if variables == None:
             # Choice of crossover points follows Koza's (1992) widely used approach
             # of choosing functions 90% of the time and leaves 10% of the time.
-            probs = np.array([0.9 if isinstance(node, _Function) else 0.1
-                            for node in program])
+            probs = np.array(
+                [0.9 if isinstance(node, _Function) else 0.1 for node in program]
+            )
             probs = np.cumsum(probs / probs.sum())
             start = np.searchsorted(probs, random_state.uniform())
         else:
-            possible_roots = self.get_possible_subtree_roots(variables,program=program)
+            possible_roots = self.get_possible_subtree_roots(variables, program=program)
             if len(possible_roots) == 0:
                 return None
-            probs = np.array([0.1 if root[1] == 'leaf' else 0.9
-                            for root in possible_roots])
+            probs = np.array(
+                [0.1 if root[1] == "leaf" else 0.9 for root in possible_roots]
+            )
             probs = np.cumsum(probs / probs.sum())
             start_raw = np.searchsorted(probs, random_state.uniform())
             start = possible_roots[start_raw][0]
@@ -1210,7 +1186,7 @@ class _Program(object):
         active_variables_whole = self.find_active_variables()
         active_variables_removed = self.find_active_variables(self.program[start:end])
         all_possible_variables = set(range(self.n_features))
-        active_variables_left = (active_variables_whole - active_variables_removed)
+        active_variables_left = active_variables_whole - active_variables_removed
         active_variables_possible = all_possible_variables - active_variables_left
         # Get a subtree to donate
         result = self.get_subtree(random_state, donor, active_variables_possible)
@@ -1218,18 +1194,23 @@ class _Program(object):
             donor_start, donor_end = result
         else:
             return self.program, [], []
-    
+
         # Check if there is a redundant shape function
         if start != 0:
-            if self.is_shape_function(self.program[start-1]) and self.is_shape_function(donor[donor_start]):
+            if self.is_shape_function(
+                self.program[start - 1]
+            ) and self.is_shape_function(donor[donor_start]):
                 donor_start += 1
-        
-        donor_removed = list(set(range(len(donor))) -
-                             set(range(donor_start, donor_end)))
+
+        donor_removed = list(
+            set(range(len(donor))) - set(range(donor_start, donor_end))
+        )
         # Insert genetic material from donor
-        return (self.program[:start] +
-                donor[donor_start:donor_end] +
-                self.program[end:]), removed, donor_removed
+        return (
+            (self.program[:start] + donor[donor_start:donor_end] + self.program[end:]),
+            removed,
+            donor_removed,
+        )
 
     def subtree_mutation(self, random_state):
         """Perform the subtree mutation operation on the program.
@@ -1257,21 +1238,33 @@ class _Program(object):
         active_variables_whole = self.find_active_variables()
         active_variables_removed = self.find_active_variables(self.program[start:end])
         all_possible_variables = set(range(self.n_features))
-        active_variables_left = (active_variables_whole - active_variables_removed)
+        active_variables_left = active_variables_whole - active_variables_removed
         active_variables_possible = all_possible_variables - active_variables_left
 
-        num_of_variables = self.random_skewed_integer(random_state,1,len(active_variables_possible)+1)
-        chosen_active_variables = set(random_state.choice(list(active_variables_possible),size=num_of_variables,replace=False))
+        num_of_variables = self.random_skewed_integer(
+            random_state, 1, len(active_variables_possible) + 1
+        )
+        chosen_active_variables = set(
+            random_state.choice(
+                list(active_variables_possible), size=num_of_variables, replace=False
+            )
+        )
 
         # Build a new naive program
         chicken = self.build_program(random_state, variables=chosen_active_variables)
-        
+
         donor_start = 0
         if start != 0:
-            if self.is_shape_function(chicken[0]) and self.is_shape_function(self.program[start-1]):
+            if self.is_shape_function(chicken[0]) and self.is_shape_function(
+                self.program[start - 1]
+            ):
                 donor_start = 1
-        
-        return (self.program[:start] + chicken[donor_start:] + self.program[end:]), removed, range(donor_start,len(chicken))
+
+        return (
+            (self.program[:start] + chicken[donor_start:] + self.program[end:]),
+            removed,
+            range(donor_start, len(chicken)),
+        )
 
         # # Do subtree mutation via the headless chicken method!
         # return self.crossover(chicken, random_state)
@@ -1302,8 +1295,9 @@ class _Program(object):
         sub_start, sub_end = self.get_subtree(random_state, subtree)
         hoist = subtree[sub_start:sub_end]
         # Determine which nodes were removed for plotting
-        removed = list(set(range(start, end)) -
-                       set(range(start + sub_start, start + sub_end)))
+        removed = list(
+            set(range(start, end)) - set(range(start + sub_start, start + sub_end))
+        )
         return self.program[:start] + hoist + self.program[end:], removed
 
     def point_mutation(self, random_state):
@@ -1327,22 +1321,19 @@ class _Program(object):
         """
         program = copy(self.program)
 
-
-
         # Get the nodes to modify
-        mutate = np.where(random_state.uniform(size=len(program)) <
-                          self.p_point_replace)[0]
+        mutate = np.where(
+            random_state.uniform(size=len(program)) < self.p_point_replace
+        )[0]
 
         all_possible_variables = set([int(i) for i in range(self.n_features)])
         active_variables = self.find_active_variables()
         not_active_variables = all_possible_variables - active_variables
-       
 
         # Add variables to be mutated
         for node in mutate:
             if isinstance(program[node], int):
                 not_active_variables.add(program[node])
-        
 
         for node in mutate:
             if isinstance(program[node], _Function):
@@ -1356,8 +1347,6 @@ class _Program(object):
                 terminal = int(random_state.choice(list(not_active_variables)))
                 program[node] = terminal
                 not_active_variables.remove(terminal)
-
-    
 
         # for node in mutate:
         #     if isinstance(program[node], _Function):

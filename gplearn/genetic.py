@@ -8,15 +8,15 @@ computer programs.
 # Author: Trevor Stephens <trevorstephens.com>
 #
 # License: BSD 3 clause
-import wandb # SBL
+import wandb  # SBL
 import itertools
 from abc import ABCMeta, abstractmethod
 from time import time
 from warnings import warn
-from pathlib import Path # SBL
+from pathlib import Path  # SBL
 
 import numpy as np
-import pandas as pd 
+import pandas as pd
 from joblib import Parallel, delayed
 from scipy.stats import rankdata
 from sklearn.base import BaseEstimator
@@ -38,42 +38,44 @@ from multiprocessing import Manager
 
 from datetime import datetime
 
-__all__ = ['SymbolicRegressor', 'SymbolicClassifier', 'SymbolicTransformer']
+__all__ = ["SymbolicRegressor", "SymbolicClassifier", "SymbolicTransformer"]
 
 MAX_INT = np.iinfo(np.int32).max
 
+
 def _transform(program_list, categorical_variables):
 
-    shape_function = _function_map['shape']
+    shape_function = _function_map["shape"]
 
     cat_indices = []
 
     for i, node in enumerate(program_list):
-        if isinstance(node,int):
+        if isinstance(node, int):
             if node in categorical_variables:
                 if i > 0:
-                    prev_node = program_list[i-1]
+                    prev_node = program_list[i - 1]
                     if not isinstance(prev_node, _Function):
                         cat_indices.append(i)
                     else:
-                        if prev_node.name != 'shape':
+                        if prev_node.name != "shape":
                             cat_indices.append(i)
                 else:
                     cat_indices.append(i)
-    
+
     shift = 0
     for ind in cat_indices:
-        program_list.insert(ind+shift,shape_function)
-        shift += 1       
-    
+        program_list.insert(ind + shift, shape_function)
+        shift += 1
+
     # for node in self.program:
     #     if isinstance(node,_Function):
     #         print(node.name)
     #     else:
     #         print(node)
-    return [n.name if isinstance(n,_Function) else n for n in program_list]
+    return [n.name if isinstance(n, _Function) else n for n in program_list]
 
-# SBL: Deprecated 
+
+# SBL: Deprecated
 # def check_cached_results(cached_results, program, categorical_variables):
 #     program_list = program.program
 #     new_program_list = _transform(program_list, categorical_variables)
@@ -82,7 +84,7 @@ def _transform(program_list, categorical_variables):
 #     if hashable in cached_results:
 #         result = cached_results[hashable]
 #     return result
-        
+
 # def save_to_cached_results(cached_results, program, categorical_variables, score):
 #     program_list = program.program
 #     new_program_list = _transform(program_list, categorical_variables)
@@ -91,28 +93,30 @@ def _transform(program_list, categorical_variables):
 #     print(len(cached_results))
 #     print(f"Min error so far: {min(cached_results.items(),key=lambda x: x[1])[1]}")
 #     # print(id(cached_results))
-        
 
-def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, cached_results):
+
+def _parallel_evolve(
+    n_programs, parents, X, y, sample_weight, seeds, params, cached_results
+):
     """Private function used to build a batch of programs within a job."""
     n_samples, n_features = X.shape
     # Unpack parameters
-    tournament_size = params['tournament_size']
-    function_set = params['function_set']
-    arities = params['arities']
-    init_depth = params['init_depth']
-    init_method = params['init_method']
-    const_range = params['const_range']
-    metric = params['_metric']
-    transformer = params['_transformer']
-    parsimony_coefficient = params['parsimony_coefficient']
-    method_probs = params['method_probs']
-    p_point_replace = params['p_point_replace']
-    max_samples = params['max_samples']
-    feature_names = params['feature_names']
-    optim_dict = params['optim_dict']
-    ohe_matrices = params['ohe_matrices']
-    timestamp = params['timestamp']
+    tournament_size = params["tournament_size"]
+    function_set = params["function_set"]
+    arities = params["arities"]
+    init_depth = params["init_depth"]
+    init_method = params["init_method"]
+    const_range = params["const_range"]
+    metric = params["_metric"]
+    transformer = params["_transformer"]
+    parsimony_coefficient = params["parsimony_coefficient"]
+    method_probs = params["method_probs"]
+    p_point_replace = params["p_point_replace"]
+    max_samples = params["max_samples"]
+    feature_names = params["feature_names"]
+    optim_dict = params["optim_dict"]
+    ohe_matrices = params["ohe_matrices"]
+    timestamp = params["timestamp"]
 
     max_samples = int(max_samples * n_samples)
 
@@ -132,16 +136,15 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
     for i in range(n_programs):
 
         random_state = check_random_state(seeds[i])
-        
+
         parent_to_print = None
-        genome_to_print = {'method':None}
+        genome_to_print = {"method": None}
 
         if parents is None:
             program = None
             genome = None
         else:
 
-            
             method = random_state.uniform()
             parent, parent_index = _tournament()
             parent_to_print = parent
@@ -149,55 +152,68 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
             if method < method_probs[0]:
                 # crossover
                 donor, donor_index = _tournament()
-                program, removed, remains = parent.crossover(donor.program,
-                                                             random_state)
-                genome = {'method': 'Crossover',
-                          'parent_idx': parent_index,
-                          'parent_nodes': removed,
-                          'donor_idx': donor_index,
-                          'donor_nodes': remains}
+                program, removed, remains = parent.crossover(
+                    donor.program, random_state
+                )
+                genome = {
+                    "method": "Crossover",
+                    "parent_idx": parent_index,
+                    "parent_nodes": removed,
+                    "donor_idx": donor_index,
+                    "donor_nodes": remains,
+                }
             elif method < method_probs[1]:
                 # subtree_mutation
                 program, removed, _ = parent.subtree_mutation(random_state)
-                genome = {'method': 'Subtree Mutation',
-                          'parent_idx': parent_index,
-                          'parent_nodes': removed}
+                genome = {
+                    "method": "Subtree Mutation",
+                    "parent_idx": parent_index,
+                    "parent_nodes": removed,
+                }
             elif method < method_probs[2]:
                 # hoist_mutation
                 program, removed = parent.hoist_mutation(random_state)
-                genome = {'method': 'Hoist Mutation',
-                          'parent_idx': parent_index,
-                          'parent_nodes': removed}
+                genome = {
+                    "method": "Hoist Mutation",
+                    "parent_idx": parent_index,
+                    "parent_nodes": removed,
+                }
             elif method < method_probs[3]:
                 # point_mutation
                 program, mutated = parent.point_mutation(random_state)
-                genome = {'method': 'Point Mutation',
-                          'parent_idx': parent_index,
-                          'parent_nodes': mutated}
+                genome = {
+                    "method": "Point Mutation",
+                    "parent_idx": parent_index,
+                    "parent_nodes": mutated,
+                }
             else:
                 # reproduction
                 program = parent.reproduce()
-                genome = {'method': 'Reproduction',
-                          'parent_idx': parent_index,
-                          'parent_nodes': []}
-            
+                genome = {
+                    "method": "Reproduction",
+                    "parent_idx": parent_index,
+                    "parent_nodes": [],
+                }
+
             genome_to_print = genome
 
-        program = _Program(function_set=function_set,
-                           arities=arities,
-                           init_depth=init_depth,
-                           init_method=init_method,
-                           n_features=n_features,
-                           metric=metric,
-                           transformer=transformer,
-                           const_range=const_range,
-                           p_point_replace=p_point_replace,
-                           parsimony_coefficient=parsimony_coefficient,
-                           feature_names=feature_names,
-                           random_state=random_state,
-                           program=program,
-                           optim_dict=optim_dict,
-                           timestamp=timestamp)
+        program = _Program(
+            function_set=function_set,
+            arities=arities,
+            init_depth=init_depth,
+            init_method=init_method,
+            n_features=n_features,
+            metric=metric,
+            transformer=transformer,
+            const_range=const_range,
+            p_point_replace=p_point_replace,
+            parsimony_coefficient=parsimony_coefficient,
+            feature_names=feature_names,
+            random_state=random_state,
+            program=program,
+            optim_dict=optim_dict,
+            timestamp=timestamp,
+        )
 
         program.parents = genome
 
@@ -205,7 +221,7 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
 
         # SBL: Moved to _parallel_train so that duplicates can be removed before fitting all SHAREs in parallel
 
-        # # Draw samples, using sample weights, and then fit 
+        # # Draw samples, using sample weights, and then fit
         # if sample_weight is None:
         #     curr_sample_weight = np.ones((n_samples,))
         # else:
@@ -238,7 +254,6 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
 
 
 class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
-
     """Base class for symbolic regression / classification estimators.
 
     Warning: This class should not be used directly.
@@ -247,36 +262,38 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
     """
 
     @abstractmethod
-    def __init__(self,
-                 *,
-                 population_size=1000,
-                 hall_of_fame=None,
-                 n_components=None,
-                 generations=20,
-                 tournament_size=20,
-                 stopping_criteria=0.0,
-                 const_range=(-1., 1.),
-                 init_depth=(2, 6),
-                 init_method='half and half',
-                 function_set=('add', 'sub', 'mul', 'div'),
-                 transformer=None,
-                 metric='mean absolute error',
-                 parsimony_coefficient=0.001,
-                 p_crossover=0.9,
-                 p_subtree_mutation=0.01,
-                 p_hoist_mutation=0.01,
-                 p_point_mutation=0.01,
-                 p_point_replace=0.05,
-                 max_samples=1.0,
-                 class_weight=None,
-                 feature_names=None,
-                 warm_start=False,
-                 low_memory=False,
-                 n_jobs=1,
-                 verbose=0,
-                 random_state=None,
-                 optim_dict=None,
-                 categorical_variables=[]):
+    def __init__(
+        self,
+        *,
+        population_size=1000,
+        hall_of_fame=None,
+        n_components=None,
+        generations=20,
+        tournament_size=20,
+        stopping_criteria=0.0,
+        const_range=(-1.0, 1.0),
+        init_depth=(2, 6),
+        init_method="half and half",
+        function_set=("add", "sub", "mul", "div"),
+        transformer=None,
+        metric="mean absolute error",
+        parsimony_coefficient=0.001,
+        p_crossover=0.9,
+        p_subtree_mutation=0.01,
+        p_hoist_mutation=0.01,
+        p_point_mutation=0.01,
+        p_point_replace=0.05,
+        max_samples=1.0,
+        class_weight=None,
+        feature_names=None,
+        warm_start=False,
+        low_memory=False,
+        n_jobs=1,
+        verbose=0,
+        random_state=None,
+        optim_dict=None,
+        categorical_variables=[],
+    ):
 
         self.population_size = population_size
         self.hall_of_fame = hall_of_fame
@@ -312,8 +329,6 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
         # Create a shared dictionary using the manager
         self.cached_results = self.manager.dict()
 
-
-
     def _verbose_reporter(self, run_details=None):
         """A report of the progress of the evolution process.
 
@@ -324,48 +339,62 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
         """
         if run_details is None:
-            print('    |{:^25}|{:^42}|'.format('Population Average',
-                                               'Best Individual'))
-            print('-' * 4 + ' ' + '-' * 25 + ' ' + '-' * 42 + ' ' + '-' * 10)
-            line_format = '{:>4} {:>8} {:>16} {:>8} {:>16} {:>16} {:>10}'
-            print(line_format.format('Gen', 'Length', 'Fitness', 'Length',
-                                     'Fitness', 'OOB Fitness', 'Time Left'))
+            print("    |{:^25}|{:^42}|".format("Population Average", "Best Individual"))
+            print("-" * 4 + " " + "-" * 25 + " " + "-" * 42 + " " + "-" * 10)
+            line_format = "{:>4} {:>8} {:>16} {:>8} {:>16} {:>16} {:>10}"
+            print(
+                line_format.format(
+                    "Gen",
+                    "Length",
+                    "Fitness",
+                    "Length",
+                    "Fitness",
+                    "OOB Fitness",
+                    "Time Left",
+                )
+            )
 
         else:
             # Estimate remaining time for run
-            gen = run_details['generation'][-1]
-            generation_time = run_details['generation_time'][-1]
+            gen = run_details["generation"][-1]
+            generation_time = run_details["generation_time"][-1]
             remaining_time = (self.generations - gen - 1) * generation_time
             if remaining_time > 60:
-                remaining_time = '{0:.2f}m'.format(remaining_time / 60.0)
+                remaining_time = "{0:.2f}m".format(remaining_time / 60.0)
             else:
-                remaining_time = '{0:.2f}s'.format(remaining_time)
+                remaining_time = "{0:.2f}s".format(remaining_time)
 
-            oob_fitness = 'N/A'
-            line_format = '{:4d} {:8.2f} {:16g} {:8d} {:16g} {:>16} {:>10}'
+            oob_fitness = "N/A"
+            line_format = "{:4d} {:8.2f} {:16g} {:8d} {:16g} {:>16} {:>10}"
             if self.max_samples < 1.0:
-                oob_fitness = run_details['best_oob_fitness'][-1]
-                line_format = '{:4d} {:8.2f} {:16g} {:8d} {:16g} {:16g} {:>10}'
+                oob_fitness = run_details["best_oob_fitness"][-1]
+                line_format = "{:4d} {:8.2f} {:16g} {:8d} {:16g} {:16g} {:>10}"
 
-            print(line_format.format(run_details['generation'][-1],
-                                     run_details['average_length'][-1],
-                                     run_details['average_fitness'][-1],
-                                     run_details['best_length'][-1],
-                                     run_details['best_fitness'][-1],
-                                     oob_fitness,
-                                     remaining_time))
+            print(
+                line_format.format(
+                    run_details["generation"][-1],
+                    run_details["average_length"][-1],
+                    run_details["average_fitness"][-1],
+                    run_details["best_length"][-1],
+                    run_details["best_fitness"][-1],
+                    oob_fitness,
+                    remaining_time,
+                )
+            )
 
     def _create_ohe_matrices(self, X, categorical_variables, device):
         ohe_matrices = {}
-        for k,v in categorical_variables.items():
-            submatrix = X[:,[k]]
-            submatrix = submatrix.astype('int')
+        for k, v in categorical_variables.items():
+            submatrix = X[:, [k]]
+            submatrix = submatrix.astype("int")
             # numbers = sorted(np.unique(submatrix))
             numbers = list(range(v))
-            ohe = OneHotEncoder(sparse_output=False) # SBL - sparse to sparse_output also don't hardcode categories
+            ohe = OneHotEncoder(
+                sparse_output=False
+            )  # SBL - sparse to sparse_output also don't hardcode categories
             submatrix = ohe.fit_transform(submatrix)
             ohe_matrices[k] = torch.from_numpy(submatrix).float().to(device)
-        
+
         return ohe_matrices
 
     def fit(self, X, y, sample_weight=None):
@@ -404,54 +433,59 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             if self.class_weight:
                 if sample_weight is None:
-                    sample_weight = 1.
+                    sample_weight = 1.0
                 # modify the sample weights with the corresponding class weight
-                sample_weight = (sample_weight *
-                                 compute_sample_weight(self.class_weight, y))
+                sample_weight = sample_weight * compute_sample_weight(
+                    self.class_weight, y
+                )
 
             self.classes_, y = np.unique(y, return_inverse=True)
             n_trim_classes = np.count_nonzero(np.bincount(y, sample_weight))
             if n_trim_classes != 2:
-                raise ValueError("y contains %d class after sample_weight "
-                                 "trimmed classes with zero weights, while 2 "
-                                 "classes are required."
-                                 % n_trim_classes)
+                raise ValueError(
+                    "y contains %d class after sample_weight "
+                    "trimmed classes with zero weights, while 2 "
+                    "classes are required." % n_trim_classes
+                )
             self.n_classes_ = len(self.classes_)
 
         else:
             X, y = self._validate_data(X, y, y_numeric=True)
 
-        
-
         hall_of_fame = self.hall_of_fame
         if hall_of_fame is None:
             hall_of_fame = self.population_size
         if hall_of_fame > self.population_size or hall_of_fame < 1:
-            raise ValueError('hall_of_fame (%d) must be less than or equal to '
-                             'population_size (%d).' % (self.hall_of_fame,
-                                                        self.population_size))
+            raise ValueError(
+                "hall_of_fame (%d) must be less than or equal to "
+                "population_size (%d)." % (self.hall_of_fame, self.population_size)
+            )
         n_components = self.n_components
         if n_components is None:
             n_components = hall_of_fame
         if n_components > hall_of_fame or n_components < 1:
-            raise ValueError('n_components (%d) must be less than or equal to '
-                             'hall_of_fame (%d).' % (self.n_components,
-                                                     self.hall_of_fame))
+            raise ValueError(
+                "n_components (%d) must be less than or equal to "
+                "hall_of_fame (%d)." % (self.n_components, self.hall_of_fame)
+            )
 
         self._function_set = []
         for function in self.function_set:
             if isinstance(function, str):
                 if function not in _function_map:
-                    raise ValueError('invalid function name %s found in '
-                                     '`function_set`.' % function)
+                    raise ValueError(
+                        "invalid function name %s found in "
+                        "`function_set`." % function
+                    )
                 self._function_set.append(_function_map[function])
             elif isinstance(function, _Function):
                 self._function_set.append(function)
             else:
-                raise ValueError('invalid type %s found in `function_set`.'
-                                 % type(function))
+                raise ValueError(
+                    "invalid type %s found in `function_set`." % type(function)
+                )
         if not self._function_set:
-            raise ValueError('No valid functions found in `function_set`.')
+            raise ValueError("No valid functions found in `function_set`.")
 
         # For point-mutation to find a compatible replacement node
         self._arities = {}
@@ -463,114 +497,142 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
         if isinstance(self.metric, _Fitness):
             self._metric = self.metric
         elif isinstance(self, RegressorMixin):
-            if self.metric not in ('mean absolute error', 'mse', 'rmse',
-                                   'pearson', 'spearman'):
-                raise ValueError('Unsupported metric: %s' % self.metric)
+            if self.metric not in (
+                "mean absolute error",
+                "mse",
+                "rmse",
+                "pearson",
+                "spearman",
+            ):
+                raise ValueError("Unsupported metric: %s" % self.metric)
             self._metric = _fitness_map[self.metric]
         elif isinstance(self, ClassifierMixin):
-            if self.metric != 'log loss':
-                raise ValueError('Unsupported metric: %s' % self.metric)
+            if self.metric != "log loss":
+                raise ValueError("Unsupported metric: %s" % self.metric)
             self._metric = _fitness_map[self.metric]
         elif isinstance(self, TransformerMixin):
-            if self.metric not in ('pearson', 'spearman'):
-                raise ValueError('Unsupported metric: %s' % self.metric)
+            if self.metric not in ("pearson", "spearman"):
+                raise ValueError("Unsupported metric: %s" % self.metric)
             self._metric = _fitness_map[self.metric]
 
-        self._method_probs = np.array([self.p_crossover,
-                                       self.p_subtree_mutation,
-                                       self.p_hoist_mutation,
-                                       self.p_point_mutation])
+        self._method_probs = np.array(
+            [
+                self.p_crossover,
+                self.p_subtree_mutation,
+                self.p_hoist_mutation,
+                self.p_point_mutation,
+            ]
+        )
         self._method_probs = np.cumsum(self._method_probs)
 
         if self._method_probs[-1] > 1:
-            raise ValueError('The sum of p_crossover, p_subtree_mutation, '
-                             'p_hoist_mutation and p_point_mutation should '
-                             'total to 1.0 or less.')
+            raise ValueError(
+                "The sum of p_crossover, p_subtree_mutation, "
+                "p_hoist_mutation and p_point_mutation should "
+                "total to 1.0 or less."
+            )
 
-        if self.init_method not in ('half and half', 'grow', 'full'):
-            raise ValueError('Valid program initializations methods include '
-                             '"grow", "full" and "half and half". Given %s.'
-                             % self.init_method)
+        if self.init_method not in ("half and half", "grow", "full"):
+            raise ValueError(
+                "Valid program initializations methods include "
+                '"grow", "full" and "half and half". Given %s.' % self.init_method
+            )
 
-        if not((isinstance(self.const_range, tuple) and
-                len(self.const_range) == 2) or self.const_range is None):
-            raise ValueError('const_range should be a tuple with length two, '
-                             'or None.')
+        if not (
+            (isinstance(self.const_range, tuple) and len(self.const_range) == 2)
+            or self.const_range is None
+        ):
+            raise ValueError(
+                "const_range should be a tuple with length two, " "or None."
+            )
 
-        if (not isinstance(self.init_depth, tuple) or
-                len(self.init_depth) != 2):
-            raise ValueError('init_depth should be a tuple with length two.')
+        if not isinstance(self.init_depth, tuple) or len(self.init_depth) != 2:
+            raise ValueError("init_depth should be a tuple with length two.")
         if self.init_depth[0] > self.init_depth[1]:
-            raise ValueError('init_depth should be in increasing numerical '
-                             'order: (min_depth, max_depth).')
+            raise ValueError(
+                "init_depth should be in increasing numerical "
+                "order: (min_depth, max_depth)."
+            )
 
         if self.feature_names is not None:
             if self.n_features_in_ != len(self.feature_names):
-                raise ValueError('The supplied `feature_names` has different '
-                                 'length to n_features. Expected %d, got %d.'
-                                 % (self.n_features_in_,
-                                    len(self.feature_names)))
+                raise ValueError(
+                    "The supplied `feature_names` has different "
+                    "length to n_features. Expected %d, got %d."
+                    % (self.n_features_in_, len(self.feature_names))
+                )
             for feature_name in self.feature_names:
                 if not isinstance(feature_name, str):
-                    raise ValueError('invalid type %s found in '
-                                     '`feature_names`.' % type(feature_name))
+                    raise ValueError(
+                        "invalid type %s found in "
+                        "`feature_names`." % type(feature_name)
+                    )
 
         if self.transformer is not None:
             if isinstance(self.transformer, _Function):
                 self._transformer = self.transformer
-            elif self.transformer == 'sigmoid':
+            elif self.transformer == "sigmoid":
                 self._transformer = sigmoid
             else:
-                raise ValueError('Invalid `transformer`. Expected either '
-                                 '"sigmoid" or _Function object, got %s' %
-                                 type(self.transformer))
+                raise ValueError(
+                    "Invalid `transformer`. Expected either "
+                    '"sigmoid" or _Function object, got %s' % type(self.transformer)
+                )
             if self._transformer.arity != 1:
-                raise ValueError('Invalid arity for `transformer`. Expected 1, '
-                                 'got %d.' % (self._transformer.arity))
+                raise ValueError(
+                    "Invalid arity for `transformer`. Expected 1, "
+                    "got %d." % (self._transformer.arity)
+                )
 
         params = self.get_params()
-        params['_metric'] = self._metric
-        if hasattr(self, '_transformer'):
-            params['_transformer'] = self._transformer
+        params["_metric"] = self._metric
+        if hasattr(self, "_transformer"):
+            params["_transformer"] = self._transformer
         else:
-            params['_transformer'] = None
-        params['function_set'] = self._function_set
-        params['arities'] = self._arities
-        params['method_probs'] = self._method_probs
-        params['opt_dict'] = self.optim_dict
-        
-        device = torch.device(self.optim_dict['device'])
-        params['ohe_matrices'] = self._create_ohe_matrices(X,self.categorical_variables, device=device)
-        params['timestamp'] = timestamp
+            params["_transformer"] = None
+        params["function_set"] = self._function_set
+        params["arities"] = self._arities
+        params["method_probs"] = self._method_probs
+        params["opt_dict"] = self.optim_dict
+
+        device = torch.device(self.optim_dict["device"])
+        params["ohe_matrices"] = self._create_ohe_matrices(
+            X, self.categorical_variables, device=device
+        )
+        params["timestamp"] = timestamp
 
         X = torch.from_numpy(np.array(X)).float().to(device)
         y = torch.from_numpy(np.array(y)).float().to(device)
         # print(params['ohe_matrices'])
 
-
-
-        if not self.warm_start or not hasattr(self, '_programs'):
+        if not self.warm_start or not hasattr(self, "_programs"):
             # Free allocated memory, if any
             self._programs = []
-            self.run_details_ = {'generation': [],
-                                 'average_length': [],
-                                 'average_fitness': [],
-                                 'best_length': [],
-                                 'best_fitness': [],
-                                 'best_oob_fitness': [],
-                                 'generation_time': []}
+            self.run_details_ = {
+                "generation": [],
+                "average_length": [],
+                "average_fitness": [],
+                "best_length": [],
+                "best_fitness": [],
+                "best_oob_fitness": [],
+                "generation_time": [],
+            }
 
         prior_generations = len(self._programs)
         n_more_generations = self.generations - prior_generations
 
         if n_more_generations < 0:
-            raise ValueError('generations=%d must be larger or equal to '
-                             'len(_programs)=%d when warm_start==True'
-                             % (self.generations, len(self._programs)))
+            raise ValueError(
+                "generations=%d must be larger or equal to "
+                "len(_programs)=%d when warm_start==True"
+                % (self.generations, len(self._programs))
+            )
         elif n_more_generations == 0:
             fitness = [program.raw_fitness_ for program in self._programs[-1]]
-            warn('Warm-start fitting without increasing n_estimators does not '
-                 'fit new programs.')
+            warn(
+                "Warm-start fitting without increasing n_estimators does not "
+                "fit new programs."
+            )
 
         if self.warm_start:
             # Generate and discard seeds that would have been produced on the
@@ -583,11 +645,14 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             self._verbose_reporter()
 
         # SBL - Checkpoint saving initialisation
-        checkpoint_path = Path(self.optim_dict.get('checkpoint_folder') or 'checkpoints') / self.timestamp
+        checkpoint_path = (
+            Path(self.optim_dict.get("checkpoint_folder") or "checkpoints")
+            / self.timestamp
+        )
         if not checkpoint_path.exists():
             checkpoint_path.mkdir(parents=True, exist_ok=True)
-        dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
-
+        dictionary = pd.DataFrame(columns=["id", "equation", "raw_fitness", "r2"])
+        self.optim_dict["checkpoint_path"] = checkpoint_path
 
         for gen in range(prior_generations, self.generations):
 
@@ -600,65 +665,90 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             # Parallel loop
             n_jobs, n_programs, starts = _partition_estimators(
-                self.population_size, self.n_jobs)
+                self.population_size, self.n_jobs
+            )
             seeds = random_state.randint(MAX_INT, size=self.population_size)
             start_idx = self.population_size * gen
-            population = Parallel(backend='threading',n_jobs=n_jobs,
-                                  verbose=int(self.verbose > 1))(
-                delayed(_parallel_evolve)(n_programs[i],
-                                          parents,
-                                          X,
-                                          y,
-                                          sample_weight,
-                                          seeds[starts[i]:starts[i + 1]],
-                                          params,self.cached_results)
-                for i in range(n_jobs))
+            population = Parallel(
+                backend="threading", n_jobs=n_jobs, verbose=int(self.verbose > 1)
+            )(
+                delayed(_parallel_evolve)(
+                    n_programs[i],
+                    parents,
+                    X,
+                    y,
+                    sample_weight,
+                    seeds[starts[i] : starts[i + 1]],
+                    params,
+                    self.cached_results,
+                )
+                for i in range(n_jobs)
+            )
 
             # Reduce, maintaining order across different n_jobs
             population = list(itertools.chain.from_iterable(population))
 
             # SBL: Add unique hash to each program and check uniqueness
             seen_hashes, population_unique = set(self.cached_results.keys()), []
-            print(f'Seen hashes: ', seen_hashes)
+            print(f"Seen hashes: ", seen_hashes)
             for program in population:
-                program.hash = tuple(_transform(program.program, self.categorical_variables))
+                program.hash = tuple(
+                    _transform(program.program, self.categorical_variables)
+                )
                 if program.hash not in seen_hashes:
                     seen_hashes.add(program.hash)
                     population_unique.append(program)
-                    print(f'Cached hash: {program.hash}')
-                
+                    print(f"Cached hash: {program.hash}")
+
             # SBL: Now train the shape functions and obtain fitness values
-            def _fit_single(program, idx): 
+            def _fit_single(program, idx):
                 program.raw_fitness_, program.extended_fitness_ = program.raw_fitness(
-                    X, y, sample_weight, 
-                    checkpoint_folder=checkpoint_path, new_id=idx, 
-                    ohe_matrices=params['ohe_matrices']
+                    X,
+                    y,
+                    sample_weight,
+                    checkpoint_folder=checkpoint_path,
+                    new_id=idx,
+                    ohe_matrices=params["ohe_matrices"],
                 )
                 return program
 
-            print(f"Unique programs to fit this generation: {len(population_unique)} \n", '\n'.join([str(_) for _ in population_unique]))
-        
-            population_unique = Parallel(backend='threading',n_jobs=n_jobs, verbose=int(self.verbose > 1))(
-                delayed(_fit_single)(program, start_idx + i) for i, program in enumerate(population_unique)
+            print(
+                f"Unique programs to fit this generation: {len(population_unique)} \n",
+                "\n".join([str(_) for _ in population_unique]),
             )
-            self.cached_results.update({program.hash: (program.raw_fitness_, program.extended_fitness_) for program in population_unique})
+
+            population_unique = Parallel(
+                backend="threading", n_jobs=n_jobs, verbose=int(self.verbose > 1)
+            )(
+                delayed(_fit_single)(program, start_idx + i)
+                for i, program in enumerate(population_unique)
+            )
+            self.cached_results.update(
+                {
+                    program.hash: (program.raw_fitness_, program.extended_fitness_)
+                    for program in population_unique
+                }
+            )
 
             # SBL: Now recover the full population list with the cached results
             for program in population:
-                program.raw_fitness_, program.extended_fitness_ = self.cached_results[program.hash]
+                program.raw_fitness_, program.extended_fitness_ = self.cached_results[
+                    program.hash
+                ]
 
             fitness = [program.raw_fitness_ for program in population]
-            extended_fitness = [program.extended_fitness_ for program in population_unique] # Unique programs only
+            extended_fitness = [
+                program.extended_fitness_ for program in population_unique
+            ]  # Unique programs only
             length = [program.length_ for program in population]
 
             # SBL: Log extended fitness to file
             dictionary = pd.concat((dictionary, pd.DataFrame(extended_fitness)))
-            dictionary.to_csv(checkpoint_path / 'dictionary.csv', index=False)
+            dictionary.to_csv(checkpoint_path / "dictionary.csv", index=False)
 
             parsimony_coefficient = None
-            if self.parsimony_coefficient == 'auto':
-                parsimony_coefficient = (np.cov(length, fitness)[1, 0] /
-                                         np.var(length))
+            if self.parsimony_coefficient == "auto":
+                parsimony_coefficient = np.cov(length, fitness)[1, 0] / np.var(length)
             for program in population:
                 program.fitness_ = program.fitness(parsimony_coefficient)
 
@@ -671,7 +761,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                     for program in self._programs[old_gen]:
                         if program is not None:
                             for idx in program.parents:
-                                if 'idx' in idx:
+                                if "idx" in idx:
                                     indices.append(program.parents[idx])
                     indices = set(indices)
                     for idx in range(self.population_size):
@@ -687,28 +777,31 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             else:
                 best_program = population[np.argmin(fitness)]
 
-            self.run_details_['generation'].append(gen)
-            self.run_details_['average_length'].append(np.mean(length))
-            self.run_details_['average_fitness'].append(np.mean(fitness))
-            self.run_details_['best_length'].append(best_program.length_)
-            self.run_details_['best_fitness'].append(best_program.raw_fitness_)
+            self.run_details_["generation"].append(gen)
+            self.run_details_["average_length"].append(np.mean(length))
+            self.run_details_["average_fitness"].append(np.mean(fitness))
+            self.run_details_["best_length"].append(best_program.length_)
+            self.run_details_["best_fitness"].append(best_program.raw_fitness_)
             print(f"Best program: {best_program}")
             oob_fitness = np.nan
             if self.max_samples < 1.0:
                 oob_fitness = best_program.oob_fitness_
-            self.run_details_['best_oob_fitness'].append(oob_fitness)
+            self.run_details_["best_oob_fitness"].append(oob_fitness)
             generation_time = time() - start_time
-            self.run_details_['generation_time'].append(generation_time)
+            self.run_details_["generation_time"].append(generation_time)
 
             if self.verbose:
                 self._verbose_reporter(self.run_details_)
 
-            wandb.log({
-                'average fitness': self.run_details_['average_fitness'][-1],
-                'average length': self.run_details_['average_length'][-1],
-                'best fitness': self.run_details_['best_fitness'][-1],
-                'best length': self.run_details_['best_length'][-1],
-            }, step=self.run_details_['generation'][-1])
+            wandb.log(
+                {
+                    "average fitness": self.run_details_["average_fitness"][-1],
+                    "average length": self.run_details_["average_length"][-1],
+                    "best fitness": self.run_details_["best_fitness"][-1],
+                    "best length": self.run_details_["best_length"][-1],
+                },
+                step=self.run_details_["generation"][-1],
+            )
 
             # Check for early stopping
             if self._metric.greater_is_better:
@@ -724,24 +817,25 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             # Find the best individuals in the final generation
             fitness = np.array(fitness)
             if self._metric.greater_is_better:
-                hall_of_fame = fitness.argsort()[::-1][:self.hall_of_fame]
+                hall_of_fame = fitness.argsort()[::-1][: self.hall_of_fame]
             else:
-                hall_of_fame = fitness.argsort()[:self.hall_of_fame]
-            evaluation = np.array([gp.execute(X) for gp in
-                                   [self._programs[-1][i] for
-                                    i in hall_of_fame]])
-            if self.metric == 'spearman':
+                hall_of_fame = fitness.argsort()[: self.hall_of_fame]
+            evaluation = np.array(
+                [gp.execute(X) for gp in [self._programs[-1][i] for i in hall_of_fame]]
+            )
+            if self.metric == "spearman":
                 evaluation = np.apply_along_axis(rankdata, 1, evaluation)
 
-            with np.errstate(divide='ignore', invalid='ignore'):
+            with np.errstate(divide="ignore", invalid="ignore"):
                 correlations = np.abs(np.corrcoef(evaluation))
-            np.fill_diagonal(correlations, 0.)
+            np.fill_diagonal(correlations, 0.0)
             components = list(range(self.hall_of_fame))
             indices = list(range(self.hall_of_fame))
             # Iteratively remove least fit individual of most correlated pair
             while len(components) > self.n_components:
-                most_correlated = np.unravel_index(np.argmax(correlations),
-                                                   correlations.shape)
+                most_correlated = np.unravel_index(
+                    np.argmax(correlations), correlations.shape
+                )
                 # The correlation matrix is sorted by fitness, so identifying
                 # the least fit of the pair is simply getting the higher index
                 worst = max(most_correlated)
@@ -749,8 +843,9 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                 indices.remove(worst)
                 correlations = correlations[:, indices][indices, :]
                 indices = list(range(len(components)))
-            self._best_programs = [self._programs[-1][i] for i in
-                                   hall_of_fame[components]]
+            self._best_programs = [
+                self._programs[-1][i] for i in hall_of_fame[components]
+            ]
 
         else:
             # Find the best individual in the final generation
@@ -758,40 +853,43 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                 self._program = self._programs[-1][np.argmax(fitness)]
             else:
                 self._program = self._programs[-1][np.argmin(fitness)]
-            
+
             # If the score was cached then we need to train the final model
             if self._program.model is None:
-                self._program.raw_fitness(X,
-                                          y,
-                                          sample_weight,
-                                          checkpoint_path, 
-                                          self.generations * self.population_size + 1, 
-                                          params['ohe_matrices'])
+                self._program.raw_fitness(
+                    X,
+                    y,
+                    sample_weight,
+                    checkpoint_path,
+                    self.generations * self.population_size + 1,
+                    params["ohe_matrices"],
+                )
 
         return self
-    
-    def get_shape_ranges(self,X):
-        
-        if not hasattr(self, '_program'):
-            raise NotFittedError('SymbolicRegressor not fitted.')
+
+    def get_shape_ranges(self, X):
+
+        if not hasattr(self, "_program"):
+            raise NotFittedError("SymbolicRegressor not fitted.")
 
         X = check_array(X)
         _, n_features = X.shape
         if self.n_features_in_ != n_features:
-            raise ValueError('Number of features of the model must match the '
-                             'input. Model n_features is %s and input '
-                             'n_features is %s.'
-                             % (self.n_features_in_, n_features))
+            raise ValueError(
+                "Number of features of the model must match the "
+                "input. Model n_features is %s and input "
+                "n_features is %s." % (self.n_features_in_, n_features)
+            )
 
-        ohe_matrices = self._create_ohe_matrices(X,self.categorical_variables,device=self.optim_dict['device'])
-        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict['device'])
-        shape_ranges = self._program.get_shape_ranges(X,ohe_matrices)
+        ohe_matrices = self._create_ohe_matrices(
+            X, self.categorical_variables, device=self.optim_dict["device"]
+        )
+        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict["device"])
+        shape_ranges = self._program.get_shape_ranges(X, ohe_matrices)
         return shape_ranges
 
 
-
 class SymbolicRegressor(BaseSymbolic, RegressorMixin):
-
     """A Genetic Programming symbolic regressor.
 
     A symbolic regressor is an estimator that begins by building a population
@@ -987,32 +1085,34 @@ class SymbolicRegressor(BaseSymbolic, RegressorMixin):
 
     """
 
-    def __init__(self,
-                 *,
-                 population_size=1000,
-                 generations=20,
-                 tournament_size=20,
-                 stopping_criteria=0.0,
-                 const_range=(-1., 1.),
-                 init_depth=(2, 6),
-                 init_method='half and half',
-                 function_set=('add', 'sub', 'mul', 'div'),
-                 metric='mean absolute error',
-                 parsimony_coefficient=0.001,
-                 p_crossover=0.9,
-                 p_subtree_mutation=0.01,
-                 p_hoist_mutation=0.01,
-                 p_point_mutation=0.01,
-                 p_point_replace=0.05,
-                 max_samples=1.0,
-                 feature_names=None,
-                 warm_start=False,
-                 low_memory=False,
-                 n_jobs=1,
-                 verbose=0,
-                 random_state=None,
-                 optim_dict=None,
-                 categorical_variables=[]):
+    def __init__(
+        self,
+        *,
+        population_size=1000,
+        generations=20,
+        tournament_size=20,
+        stopping_criteria=0.0,
+        const_range=(-1.0, 1.0),
+        init_depth=(2, 6),
+        init_method="half and half",
+        function_set=("add", "sub", "mul", "div"),
+        metric="mean absolute error",
+        parsimony_coefficient=0.001,
+        p_crossover=0.9,
+        p_subtree_mutation=0.01,
+        p_hoist_mutation=0.01,
+        p_point_mutation=0.01,
+        p_point_replace=0.05,
+        max_samples=1.0,
+        feature_names=None,
+        warm_start=False,
+        low_memory=False,
+        n_jobs=1,
+        verbose=0,
+        random_state=None,
+        optim_dict=None,
+        categorical_variables=[],
+    ):
         super(SymbolicRegressor, self).__init__(
             population_size=population_size,
             generations=generations,
@@ -1037,11 +1137,12 @@ class SymbolicRegressor(BaseSymbolic, RegressorMixin):
             verbose=verbose,
             random_state=random_state,
             optim_dict=optim_dict,
-            categorical_variables=categorical_variables)
+            categorical_variables=categorical_variables,
+        )
 
     def __str__(self):
         """Overloads `print` output of the object to resemble a LISP tree."""
-        if not hasattr(self, '_program'):
+        if not hasattr(self, "_program"):
             return self.__repr__()
         return self._program.__str__()
 
@@ -1060,26 +1161,28 @@ class SymbolicRegressor(BaseSymbolic, RegressorMixin):
             Predicted values for X.
 
         """
-        if not hasattr(self, '_program'):
-            raise NotFittedError('SymbolicRegressor not fitted.')
+        if not hasattr(self, "_program"):
+            raise NotFittedError("SymbolicRegressor not fitted.")
 
         X = check_array(X)
         _, n_features = X.shape
         if self.n_features_in_ != n_features:
-            raise ValueError('Number of features of the model must match the '
-                             'input. Model n_features is %s and input '
-                             'n_features is %s.'
-                             % (self.n_features_in_, n_features))
+            raise ValueError(
+                "Number of features of the model must match the "
+                "input. Model n_features is %s and input "
+                "n_features is %s." % (self.n_features_in_, n_features)
+            )
 
-        ohe_matrices = self._create_ohe_matrices(X,self.categorical_variables,device=self.optim_dict['device'])
-        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict['device'])
-        y = self._program.execute(X,ohe_matrices=ohe_matrices)
+        ohe_matrices = self._create_ohe_matrices(
+            X, self.categorical_variables, device=self.optim_dict["device"]
+        )
+        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict["device"])
+        y = self._program.execute(X, ohe_matrices=ohe_matrices)
 
         return y
 
 
 class SymbolicClassifier(BaseSymbolic, ClassifierMixin):
-
     """A Genetic Programming symbolic classifier.
 
     A symbolic classifier is an estimator that begins by building a population
@@ -1281,34 +1384,36 @@ class SymbolicClassifier(BaseSymbolic, ClassifierMixin):
 
     """
 
-    def __init__(self,
-                 *,
-                 population_size=1000,
-                 generations=20,
-                 tournament_size=20,
-                 stopping_criteria=0.0,
-                 const_range=(-1., 1.),
-                 init_depth=(2, 6),
-                 init_method='half and half',
-                 function_set=('add', 'sub', 'mul', 'div'),
-                 transformer='sigmoid',
-                 metric='log loss',
-                 parsimony_coefficient=0.001,
-                 p_crossover=0.9,
-                 p_subtree_mutation=0.01,
-                 p_hoist_mutation=0.01,
-                 p_point_mutation=0.01,
-                 p_point_replace=0.05,
-                 max_samples=1.0,
-                 class_weight=None,
-                 feature_names=None,
-                 warm_start=False,
-                 low_memory=False,
-                 n_jobs=1,
-                 verbose=0,
-                 random_state=None,
-                 optim_dict=None,
-                 categorical_variables=None):
+    def __init__(
+        self,
+        *,
+        population_size=1000,
+        generations=20,
+        tournament_size=20,
+        stopping_criteria=0.0,
+        const_range=(-1.0, 1.0),
+        init_depth=(2, 6),
+        init_method="half and half",
+        function_set=("add", "sub", "mul", "div"),
+        transformer="sigmoid",
+        metric="log loss",
+        parsimony_coefficient=0.001,
+        p_crossover=0.9,
+        p_subtree_mutation=0.01,
+        p_hoist_mutation=0.01,
+        p_point_mutation=0.01,
+        p_point_replace=0.05,
+        max_samples=1.0,
+        class_weight=None,
+        feature_names=None,
+        warm_start=False,
+        low_memory=False,
+        n_jobs=1,
+        verbose=0,
+        random_state=None,
+        optim_dict=None,
+        categorical_variables=None,
+    ):
         super(SymbolicClassifier, self).__init__(
             population_size=population_size,
             generations=generations,
@@ -1335,16 +1440,17 @@ class SymbolicClassifier(BaseSymbolic, ClassifierMixin):
             verbose=verbose,
             random_state=random_state,
             optim_dict=optim_dict,
-            categorical_variables=categorical_variables)
+            categorical_variables=categorical_variables,
+        )
 
     def __str__(self):
         """Overloads `print` output of the object to resemble a LISP tree."""
-        if not hasattr(self, '_program'):
+        if not hasattr(self, "_program"):
             return self.__repr__()
         return self._program.__str__()
 
     def _more_tags(self):
-        return {'binary_only': True}
+        return {"binary_only": True}
 
     def predict_proba(self, X):
         """Predict probabilities on test vectors X.
@@ -1362,21 +1468,24 @@ class SymbolicClassifier(BaseSymbolic, ClassifierMixin):
             classes corresponds to that in the attribute `classes_`.
 
         """
-        if not hasattr(self, '_program'):
-            raise NotFittedError('SymbolicClassifier not fitted.')
+        if not hasattr(self, "_program"):
+            raise NotFittedError("SymbolicClassifier not fitted.")
 
         X = check_array(X)
         _, n_features = X.shape
         if self.n_features_in_ != n_features:
-            raise ValueError('Number of features of the model must match the '
-                             'input. Model n_features is %s and input '
-                             'n_features is %s.'
-                             % (self.n_features_in_, n_features))
-        
-        ohe_matrices = self._create_ohe_matrices(X,self.categorical_variables,device=self.optim_dict['device'])
-        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict['device'])
+            raise ValueError(
+                "Number of features of the model must match the "
+                "input. Model n_features is %s and input "
+                "n_features is %s." % (self.n_features_in_, n_features)
+            )
 
-        scores = self._program.execute(X,ohe_matrices=ohe_matrices)
+        ohe_matrices = self._create_ohe_matrices(
+            X, self.categorical_variables, device=self.optim_dict["device"]
+        )
+        X = torch.from_numpy(np.array(X)).float().to(self.optim_dict["device"])
+
+        scores = self._program.execute(X, ohe_matrices=ohe_matrices)
         proba = self._transformer(scores)
         proba = np.vstack([1 - proba, proba]).T
         return proba
@@ -1401,7 +1510,6 @@ class SymbolicClassifier(BaseSymbolic, ClassifierMixin):
 
 
 class SymbolicTransformer(BaseSymbolic, TransformerMixin):
-
     """A Genetic Programming symbolic transformer.
 
     A symbolic transformer is a supervised transformer that begins by building
@@ -1600,32 +1708,34 @@ class SymbolicTransformer(BaseSymbolic, TransformerMixin):
 
     """
 
-    def __init__(self,
-                 *,
-                 population_size=1000,
-                 hall_of_fame=100,
-                 n_components=10,
-                 generations=20,
-                 tournament_size=20,
-                 stopping_criteria=1.0,
-                 const_range=(-1., 1.),
-                 init_depth=(2, 6),
-                 init_method='half and half',
-                 function_set=('add', 'sub', 'mul', 'div'),
-                 metric='pearson',
-                 parsimony_coefficient=0.001,
-                 p_crossover=0.9,
-                 p_subtree_mutation=0.01,
-                 p_hoist_mutation=0.01,
-                 p_point_mutation=0.01,
-                 p_point_replace=0.05,
-                 max_samples=1.0,
-                 feature_names=None,
-                 warm_start=False,
-                 low_memory=False,
-                 n_jobs=1,
-                 verbose=0,
-                 random_state=None):
+    def __init__(
+        self,
+        *,
+        population_size=1000,
+        hall_of_fame=100,
+        n_components=10,
+        generations=20,
+        tournament_size=20,
+        stopping_criteria=1.0,
+        const_range=(-1.0, 1.0),
+        init_depth=(2, 6),
+        init_method="half and half",
+        function_set=("add", "sub", "mul", "div"),
+        metric="pearson",
+        parsimony_coefficient=0.001,
+        p_crossover=0.9,
+        p_subtree_mutation=0.01,
+        p_hoist_mutation=0.01,
+        p_point_mutation=0.01,
+        p_point_replace=0.05,
+        max_samples=1.0,
+        feature_names=None,
+        warm_start=False,
+        low_memory=False,
+        n_jobs=1,
+        verbose=0,
+        random_state=None,
+    ):
         super(SymbolicTransformer, self).__init__(
             population_size=population_size,
             hall_of_fame=hall_of_fame,
@@ -1650,11 +1760,12 @@ class SymbolicTransformer(BaseSymbolic, TransformerMixin):
             low_memory=low_memory,
             n_jobs=n_jobs,
             verbose=verbose,
-            random_state=random_state)
+            random_state=random_state,
+        )
 
     def __len__(self):
         """Overloads `len` output to be the number of fitted components."""
-        if not hasattr(self, '_best_programs'):
+        if not hasattr(self, "_best_programs"):
             return 0
         return self.n_components
 
@@ -1666,7 +1777,7 @@ class SymbolicTransformer(BaseSymbolic, TransformerMixin):
 
     def __str__(self):
         """Overloads `print` output of the object to resemble LISP trees."""
-        if not hasattr(self, '_best_programs'):
+        if not hasattr(self, "_best_programs"):
             return self.__repr__()
         output = str([gp.__str__() for gp in self])
         return output.replace("',", ",\n").replace("'", "")
@@ -1695,16 +1806,17 @@ class SymbolicTransformer(BaseSymbolic, TransformerMixin):
             Transformed array.
 
         """
-        if not hasattr(self, '_best_programs'):
-            raise NotFittedError('SymbolicTransformer not fitted.')
+        if not hasattr(self, "_best_programs"):
+            raise NotFittedError("SymbolicTransformer not fitted.")
 
         X = check_array(X)
         _, n_features = X.shape
         if self.n_features_in_ != n_features:
-            raise ValueError('Number of features of the model must match the '
-                             'input. Model n_features is %s and input '
-                             'n_features is %s.'
-                             % (self.n_features_in_, n_features))
+            raise ValueError(
+                "Number of features of the model must match the "
+                "input. Model n_features is %s and input "
+                "n_features is %s." % (self.n_features_in_, n_features)
+            )
 
         X_new = np.array([gp.execute(X) for gp in self._best_programs]).T
 
