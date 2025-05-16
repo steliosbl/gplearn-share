@@ -818,9 +818,10 @@ class _Program(object):
         self,
         X_train,
         y_train,
+        w_train,
         X_valid,
         y_valid,
-        sample_weight,
+        w_valid,
         new_id=0,
         ohe_matrices={},
     ):
@@ -861,10 +862,10 @@ class _Program(object):
 
         train_dataset, val_dataset = (
             torch.utils.data.TensorDataset(
-                X_train, *[ohe_matrices[k] for k in self.keys], y_train
+                X_train, *[ohe_matrices[k] for k in self.keys], y_train, w_train
             ),
             torch.utils.data.TensorDataset(
-                X_valid, *[ohe_matrices[k] for k in self.keys], y_valid
+                X_valid, *[ohe_matrices[k] for k in self.keys], y_valid, w_valid
             ),
         )
 
@@ -988,6 +989,9 @@ class _Program(object):
 
         """
 
+        if sample_weight is None:
+            sample_weight = torch.ones_like(y)
+
         train_size = int(0.8 * X.shape[0])
 
         # Create train val split
@@ -999,18 +1003,21 @@ class _Program(object):
         train_indices = indices[:train_size]
         val_indices = indices[train_size:]
 
+        X_train, X_valid = X[train_indices, :], X[val_indices, :]
+        y_train, y_valid = y[train_indices], y[val_indices]
+        w_train, w_valid = sample_weight[train_indices], sample_weight[val_indices]
+
         if not self.is_fitting_necessary(ohe_matrices.keys()):
-            y_pred = self.execute(X[val_indices, :])
+            y_pred = self.execute(X_valid)
         else:  # You need to do training
-            X_train, X_valid = X[train_indices, :], X[val_indices, :]
-            y_train, y_valid = y[train_indices], y[val_indices]
 
             y_pred = self.fit_predict(
                 X_train,
                 y_train,
+                w_train,
                 X_valid,
                 y_valid,
-                sample_weight,
+                w_valid,
                 new_id=new_id,
                 ohe_matrices=ohe_matrices,
             )
@@ -1021,10 +1028,7 @@ class _Program(object):
         y_numpy = y.cpu().numpy()
         y_numpy = y_numpy[val_indices]
 
-        if sample_weight is None:
-            sample_weight = np.ones_like(y_numpy)
-
-        raw_fitness = self.metric(y_numpy, y_pred, sample_weight)
+        raw_fitness = self.metric(y_numpy, y_pred, w_valid)
         if self.optim_dict["task"] == "regression":
             r2 = r2_score(y_numpy, y_pred)
         else:
