@@ -11,6 +11,7 @@ computer program. It is used for creating and evolving programs used in the
 
 from copy import copy
 import os
+import warnings
 
 import numpy as np
 from sklearn.utils.random import sample_without_replacement
@@ -208,6 +209,10 @@ class _Program(object):
         self._n_samples = None
         self._max_samples = None
         self._indices_state = None
+
+        # SBL - Silencing annoying warning
+        if self.optim_dict.get('num_workers_dataloader') == 0:
+            warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
     def random_function(self, random_state, only_operators=False):
         if not only_operators:
