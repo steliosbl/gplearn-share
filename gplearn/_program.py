@@ -889,7 +889,7 @@ class _Program(object):
                     return True
         return False
 
-    def raw_fitness(self, X, y, sample_weight, ohe_matrices={}):
+    def raw_fitness(self, X, y, sample_weight=None, ohe_matrices={}):
         """Evaluate the raw fitness of the program according to X, y.
 
         Parameters
@@ -929,6 +929,9 @@ class _Program(object):
             os.makedirs(checkpoint_folder)
             dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
             new_id = 0
+
+        if sample_weight is None:
+            sample_weight = torch.ones_like(y)
         
         # Create train val split
 
@@ -957,7 +960,7 @@ class _Program(object):
 
             model = LitModel(self,seed=0)
 
-            dataset = torch.utils.data.TensorDataset(X,*[ohe_matrices[k] for k in self.keys],y)
+            dataset = torch.utils.data.TensorDataset(X,*[ohe_matrices[k] for k in self.keys],y, sample_weight)
 
             train_size = int(0.8 * len(dataset))
             val_size = len(dataset) - train_size
@@ -1051,9 +1054,10 @@ class _Program(object):
 
         y_numpy = y.cpu().numpy()
         y_numpy = y_numpy[val_indices]
-        sample_weight = np.ones_like(y_numpy)
+        w_numpy = sample_weight.cpu().numpy()
+        w_numpy = w_numpy[val_indices]
 
-        raw_fitness = self.metric(y_numpy, y_pred, sample_weight)
+        raw_fitness = self.metric(y_numpy, y_pred, w_numpy)
         if self.optim_dict['task'] == 'regression':
             r2 = r2_score(y_numpy, y_pred)
         else:

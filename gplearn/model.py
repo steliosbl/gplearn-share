@@ -8,7 +8,40 @@ import time
 
 import pytorch_lightning as pl
 
+from torchsurv.loss.cox import neg_partial_log_likelihood
+
 MAX_FLOAT = 10e9
+
+class weighted_MSELoss(torch.nn.Module): # SBL: Need this to allow sample weights in the loss function
+    def __init__(self, reduction='mean'):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input, target, weight):
+        loss = (input - target) ** 2 * weight
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            return loss
+        
+class npllLoss(torch.nn.Module):
+    def __init__(self, reduction='mean'):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, input, target, weight):
+        return neg_partial_log_likelihood(
+            log_hz=input, 
+            event=weight, 
+            time=target, 
+            reduction=self.reduction,
+            ties_method="efron",
+            checks=True
+        )
+
 
 class ShapeFunction():
 
@@ -82,9 +115,11 @@ class LitModel(pl.LightningModule):
 
         # Choose the loss function
         if self.optim_dict['task'] == 'regression':
-            self.loss_fn = torch.nn.MSELoss()
+            self.loss_fn = weighted_MSELoss()
         elif self.optim_dict['task'] == 'classification':
             self.loss_fn = torch.nn.BCEWithLogitsLoss()
+        elif self.optim_dict['task'] == 'survival':
+            self.loss_fn = npllLoss()
 
         # Add shape functions in front of categorical variables if there are none
         self._add_categorical_functions(self.categorical_variables)
@@ -133,33 +168,36 @@ class LitModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
      
         batch_X_and_ohe = batch[:-1]
-        batch_y = batch[-1]
+        batch_y = batch[-2]
+        batch_w = batch[-1]
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y)
+        loss = self.loss_fn(pred, batch_y, weight=batch_w)
 
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         batch_X_and_ohe = batch[:-1]
-        batch_y = batch[-1]
+        batch_y = batch[-2]
+        batch_w = batch[-1]
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y)
+        loss = self.loss_fn(pred, batch_y, weight=batch_w)
         self.log('val_loss', loss)
         return loss
       
 
     def test_step(self, batch, batch_idx):
         batch_X_and_ohe = batch[:-1]
-        batch_y = batch[-1]
+        batch_y = batch[-2]
+        batch_w = batch[-1]
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y)
+        loss = self.loss_fn(pred, batch_y, weight=batch_w)
         self.log('test_loss', loss)
         return loss
       
@@ -407,9 +445,11 @@ class Model(torch.nn.Module):
 
         return predictions
     
-    def train(self, X, y, ohe_matrices={}, device='cpu'):
+    def train(self, X, y, sample_weight=None, ohe_matrices={}, device='cpu'):
 
         # print(ohe_matrices)
+        if sample_weight is None:
+            sample_weight = torch.ones_like(y)
 
         torch.manual_seed(self.seed)
 
@@ -467,7 +507,7 @@ class Model(torch.nn.Module):
         
         # t1 = time.time()
         # Convert the data to tensors and wrap them in a dataset
-        data = torch.utils.data.TensorDataset(X,y,*[ohe_matrices[k] for k in keys])
+        data = torch.utils.data.TensorDataset(X,y,sample_weight,*[ohe_matrices[k] for k in keys])
         # t2 = time.time()
         # print(f"Creating data object: {t2-t1}")
 
@@ -478,9 +518,11 @@ class Model(torch.nn.Module):
         # print(f"Creating dataloader object: {t2-t1}")
 
         if task == 'regression':
-            loss_fn = torch.nn.MSELoss()
+            loss_fn = weighted_MSELoss()
         elif task == 'classification':
             loss_fn = torch.nn.BCEWithLogitsLoss()
+        elif task == 'survival':
+            loss_fn = npllLoss()
         
         
         t1 = time.time()
@@ -491,7 +533,8 @@ class Model(torch.nn.Module):
             for batch in dataloader:
                 batch_X = batch[0]
                 batch_y = batch[1]
-                batch_ohe = batch[2:]
+                batch_w = batch[2]
+                batch_ohe = batch[3:]
                 # if traced_model is None:
                 #     with torch.no_grad():
                 #         traced_model = torch.jit.trace(self,(batch_X,batch_ohe))
@@ -510,7 +553,7 @@ class Model(torch.nn.Module):
                 # t32 = time.time()
 
                 # print(f"Traced - python: {(t22-t21) - (t32-t31)}")
-                loss = loss_fn(pred, batch_y)
+                loss = loss_fn(pred, batch_y, weight=batch_w)
 
                 optimizer.zero_grad()
                 loss.backward()
