@@ -9,6 +9,8 @@ import time
 import pytorch_lightning as pl
 
 from torchsurv.loss.cox import neg_partial_log_likelihood
+from pycox.models.loss import CoxPHLoss
+
 
 MAX_FLOAT = 10e9
 
@@ -39,9 +41,9 @@ class npllLoss(torch.nn.Module):
             time=target, 
             reduction=self.reduction,
             ties_method="efron",
-            checks=True
+            checks=False
         )
-
+    
 
 class ShapeFunction():
 
@@ -119,7 +121,7 @@ class LitModel(pl.LightningModule):
         elif self.optim_dict['task'] == 'classification':
             self.loss_fn = torch.nn.BCEWithLogitsLoss()
         elif self.optim_dict['task'] == 'survival':
-            self.loss_fn = npllLoss()
+            self.loss_fn = CoxPHLoss()
 
         # Add shape functions in front of categorical variables if there are none
         self._add_categorical_functions(self.categorical_variables)
@@ -173,7 +175,7 @@ class LitModel(pl.LightningModule):
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y, weight=batch_w)
+        loss = self.loss_fn(pred, batch_y, batch_w)
 
         self.log('train_loss', loss)
         return loss
@@ -185,7 +187,7 @@ class LitModel(pl.LightningModule):
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y, weight=batch_w)
+        loss = self.loss_fn(pred, batch_y, batch_w)
         self.log('val_loss', loss)
         return loss
       
@@ -197,7 +199,7 @@ class LitModel(pl.LightningModule):
               
         pred = self(batch_X_and_ohe)
                
-        loss = self.loss_fn(pred, batch_y, weight=batch_w)
+        loss = self.loss_fn(pred, batch_y, batch_w)
         self.log('test_loss', loss)
         return loss
       
@@ -522,7 +524,7 @@ class Model(torch.nn.Module):
         elif task == 'classification':
             loss_fn = torch.nn.BCEWithLogitsLoss()
         elif task == 'survival':
-            loss_fn = npllLoss()
+            loss_fn = CoxPHLoss()
         
         
         t1 = time.time()
@@ -553,7 +555,7 @@ class Model(torch.nn.Module):
                 # t32 = time.time()
 
                 # print(f"Traced - python: {(t22-t21) - (t32-t31)}")
-                loss = loss_fn(pred, batch_y, weight=batch_w)
+                loss = loss_fn(pred, batch_y, batch_w)
 
                 optimizer.zero_grad()
                 loss.backward()

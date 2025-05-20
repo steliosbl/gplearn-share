@@ -16,6 +16,7 @@ import warnings
 import numpy as np
 from sklearn.utils.random import sample_without_replacement
 from sklearn.metrics import auc, r2_score, roc_auc_score
+from sksurv.metrics import concordance_index_censored
 
 from .functions import _Function, _sigmoid
 from .utils import check_random_state
@@ -1060,9 +1061,12 @@ class _Program(object):
         raw_fitness = self.metric(y_numpy, y_pred, w_numpy)
         if self.optim_dict['task'] == 'regression':
             r2 = r2_score(y_numpy, y_pred)
-        else:
+        elif self.optim_dict['task'] == 'classification':
             logits = _sigmoid(y_pred)
             r2 = roc_auc_score(y_numpy,logits)
+        elif self.optim_dict['task'] == 'survival':
+            r2 = concordance_index_censored(estimate=y_pred, event_time=y_numpy, event_indicator=w_numpy>0)[0]
+        
         print(f"{self} | raw_fitness: {raw_fitness}")
 
         new_row = pd.DataFrame({"id":[new_id],"equation":[str(self)],"raw_fitness":[raw_fitness],"r2":[r2]})

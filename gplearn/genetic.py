@@ -201,30 +201,14 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
         print(f"{parent_to_print} -> {genome_to_print['method']} -> {program}")
 
         # Draw samples, using sample weights, and then fit
-        if sample_weight is None:
-            curr_sample_weight = np.ones((n_samples,))
-        else:
-            curr_sample_weight = sample_weight.copy()
-        oob_sample_weight = curr_sample_weight.copy()
-
-        indices, not_indices = program.get_all_indices(n_samples,
-                                                       max_samples,
-                                                       random_state)
-
-        curr_sample_weight[not_indices] = 0
-        oob_sample_weight[indices] = 0
         categorical_variables = list(ohe_matrices.keys())
         cached = check_cached_results(cached_results, program,categorical_variables)
         if cached is not None:
             print(f"Retrieved score for {program}")
             program.raw_fitness_ = cached
         else:
-            program.raw_fitness_ = program.raw_fitness(X, y, curr_sample_weight, ohe_matrices=ohe_matrices)
+            program.raw_fitness_ = program.raw_fitness(X, y, sample_weight, ohe_matrices=ohe_matrices)
             save_to_cached_results(cached_results, program, categorical_variables, program.raw_fitness_)
-
-        if max_samples < n_samples:
-            # Calculate OOB fitness
-            program.oob_fitness_ = program.raw_fitness(X, y, oob_sample_weight, ohe_matrices=ohe_matrices)
 
         programs.append(program)
 
@@ -389,8 +373,8 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
         self.timestamp = timestamp
 
         # Check arrays
-        if sample_weight is not None:
-            sample_weight = _check_sample_weight(sample_weight, X)
+        #if sample_weight is not None:
+            #sample_weight = _check_sample_weight(sample_weight, X)
 
         if isinstance(self, ClassifierMixin):
             X, y = self._validate_data(X, y, y_numeric=False)
