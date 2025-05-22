@@ -8,10 +8,6 @@ import time
 
 import pytorch_lightning as pl
 
-from torchsurv.loss.cox import neg_partial_log_likelihood
-from pycox.models.loss import CoxPHLoss
-
-
 MAX_FLOAT = 10e9
 
 class weighted_MSELoss(torch.nn.Module): # SBL: Need this to allow sample weights in the loss function
@@ -29,21 +25,6 @@ class weighted_MSELoss(torch.nn.Module): # SBL: Need this to allow sample weight
         else:
             return loss
         
-class npllLoss(torch.nn.Module):
-    def __init__(self, reduction='mean'):
-        super().__init__()
-        self.reduction = reduction
-
-    def forward(self, input, target, weight):
-        return neg_partial_log_likelihood(
-            log_hz=input, 
-            event=weight, 
-            time=target, 
-            reduction=self.reduction,
-            ties_method="efron",
-            checks=False
-        )
-    
 
 class ShapeFunction():
 
@@ -121,7 +102,12 @@ class LitModel(pl.LightningModule):
         elif self.optim_dict['task'] == 'classification':
             self.loss_fn = torch.nn.BCEWithLogitsLoss()
         elif self.optim_dict['task'] == 'survival':
-            self.loss_fn = CoxPHLoss()
+            if 'loss_fn' not in self.optim_dict:
+                raise ValueError("Must provide a loss function via optim_dict['loss_fn'] for survival tasks.")
+
+        # Override with user loss function if provided
+        if 'loss_fn' in self.optim_dict:
+            loss_fn = self.optim_dict['loss_fn']
 
         # Add shape functions in front of categorical variables if there are none
         self._add_categorical_functions(self.categorical_variables)
@@ -524,8 +510,12 @@ class Model(torch.nn.Module):
         elif task == 'classification':
             loss_fn = torch.nn.BCEWithLogitsLoss()
         elif task == 'survival':
-            loss_fn = CoxPHLoss()
-        
+            if 'loss_fn' not in self.optim_dict:
+                raise ValueError("Must provide a loss function via optim_dict['loss_fn'] for survival tasks.")
+
+        # Override with user loss function if provided
+        if 'loss_fn' in self.optim_dict:
+            loss_fn = self.optim_dict['loss_fn']
         
         t1 = time.time()
         for i in range(self.optim_dict['max_n_epochs']):

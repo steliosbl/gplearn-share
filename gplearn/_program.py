@@ -1020,6 +1020,9 @@ class _Program(object):
             )
 
             # SBL - New learning rate finder
+            # if "lr" in self.optim_dict:
+            #     model.lr = self.optim_dict["lr"]
+            # else:
             lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
             model.lr = lr.suggestion()
             
