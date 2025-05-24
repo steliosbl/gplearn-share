@@ -520,14 +520,23 @@ class _Program(object):
         stack = []
 
         shape_counter = 0
+        cat_counter = 0
         shape_ranges = {}
+        cat_ranges = {}
 
-
-        for node in program:
+        for i, node in enumerate(program):
             if isinstance(node, _Function):
-                if node.name == 'shape':
-                    stack.append([(shape_counter,node)])
-                    shape_counter += 1
+                if node.name == 'shape': 
+                    # SBL: Fixing bug where categoricals are also counted as indices in model.shape_functions
+                    # Leveraging the fact that we know that, for categoricals, the next node after the shape is 
+                    # always the categorical variable itself (see LitModel.__init__)
+                    next_node = program[i+1]
+                    if (not isinstance(next_node, _Function)) and (next_node in categorical_arguments):
+                        stack.append([(cat_counter,node)])
+                        cat_counter += 1
+                    else:
+                        stack.append([(shape_counter,node)])
+                        shape_counter += 1
                 else:
                     stack.append([(-1,node)])
             else: # it's a variable 
@@ -539,6 +548,7 @@ class _Program(object):
                 if f.name == 'shape':
                     if not isinstance(stack[-1][1],tuple):
                         intermediate_range = get_categorical_range(stack[-1][1])
+                        cat_ranges[stack[-1][1]] = intermediate_range
                     else:
                         intermediate_range = get_shape_range(index,stack[-1][1])
                         shape_ranges[index] = stack[-1][1]
@@ -549,13 +559,11 @@ class _Program(object):
                     stack.pop()
                     stack[-1].append(intermediate_range)
                 else:
-                    print(shape_ranges)
-                    return shape_ranges
+                    return shape_ranges, cat_ranges
 
     
     def plot_shape_functions(self, numerical_arguments, categorical_arguments, steps=1000):
-
-        shape_arg_ranges = self.get_argument_ranges_for_shape_functions(numerical_arguments, categorical_arguments)
+        shape_arg_ranges, _ = self.get_argument_ranges_for_shape_functions(numerical_arguments, categorical_arguments)
 
         shapes = self.model.shape_functions
 

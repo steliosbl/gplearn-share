@@ -107,7 +107,7 @@ class LitModel(pl.LightningModule):
 
         # Override with user loss function if provided
         if 'loss_fn' in self.optim_dict:
-            loss_fn = self.optim_dict['loss_fn']
+            self.loss_fn = self.optim_dict['loss_fn']
 
         # Add shape functions in front of categorical variables if there are none
         self._add_categorical_functions(self.categorical_variables)

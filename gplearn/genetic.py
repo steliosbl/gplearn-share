@@ -26,7 +26,8 @@ from sklearn.utils.validation import check_array, _check_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
 import torch
 
-from ._program import _Program
+# from ._program import _Program
+from survshares.program import SurvProgram as _Program
 from .fitness import _fitness_map, _Fitness
 from .functions import _function_map, _Function, sig1 as sigmoid
 from .utils import _partition_estimators
@@ -334,13 +335,15 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                                      remaining_time))
 
     def _create_ohe_matrices(self, X, categorical_variables, device):
+        # SBL: categorical_variables is a dict with keys as column indices in X and 
+        # values as the list of unique values that categorical column can take 
         ohe_matrices = {}
         for k,v in categorical_variables.items():
             submatrix = X[:,[k]]
             submatrix = submatrix.astype('int')
-            # numbers = sorted(np.unique(submatrix))
-            numbers = list(range(v))
-            ohe = OneHotEncoder(sparse_output=False) # SBL - sparse to sparse_output also don't hardcode categories
+            if isinstance(v, int): 
+                v = list(range(v)) # SBL: Legacy support for passing cardinality of categoricals rather than list 
+            ohe = OneHotEncoder(sparse_output=False, categories=[v]) # SBL: sparse to sparse_output also don't hardcode categories
             submatrix = ohe.fit_transform(submatrix)
             ohe_matrices[k] = torch.from_numpy(submatrix).float().to(device)
         
