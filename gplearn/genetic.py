@@ -26,8 +26,8 @@ from sklearn.utils.validation import check_array, _check_sample_weight
 from sklearn.utils.multiclass import check_classification_targets
 import torch
 
-# from ._program import _Program
-from survshares.program import SurvProgram as _Program
+from ._program import _Program
+# from survshares.program import SurvProgram as _Program
 from .fitness import _fitness_map, _Fitness
 from .functions import _function_map, _Function, sig1 as sigmoid
 from .utils import _partition_estimators
@@ -81,13 +81,13 @@ def check_cached_results(cached_results, program, categorical_variables):
         result = cached_results[hashable]
     return result
         
-def save_to_cached_results(cached_results, program, categorical_variables, score):
+def save_to_cached_results(cached_results, program, categorical_variables, fitness_dict):
     program_list = program.program
     new_program_list = _transform(program_list, categorical_variables)
     hashable = tuple(new_program_list)
-    cached_results[hashable] = score
+    cached_results[hashable] = fitness_dict
     print(len(cached_results))
-    print(f"Min error so far: {min(cached_results.items(),key=lambda x: x[1])[1]}")
+    print(f"Min error so far: {min([v.get('raw_fitness') for v in cached_results.values()])}")
     # print(id(cached_results))
         
 
@@ -206,10 +206,12 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
         cached = check_cached_results(cached_results, program,categorical_variables)
         if cached is not None:
             print(f"Retrieved score for {program}")
-            program.raw_fitness_ = cached
+            program.extended_fitness_ = cached
+            program.raw_fitness_ = program.extended_fitness_.get('raw_fitness')
         else:
-            program.raw_fitness_ = program.raw_fitness(X, y, sample_weight, ohe_matrices=ohe_matrices)
-            save_to_cached_results(cached_results, program, categorical_variables, program.raw_fitness_)
+            program.extended_fitness_ = program.raw_fitness(X, y, sample_weight, ohe_matrices=ohe_matrices)
+            program.raw_fitness_ = program.extended_fitness_.get('raw_fitness')
+            save_to_cached_results(cached_results, program, categorical_variables, program.extended_fitness_)
 
         programs.append(program)
 
@@ -536,10 +538,12 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             self.run_details_ = {'generation': [],
                                  'average_length': [],
                                  'average_fitness': [],
+                                 'average_score': [],
                                  'best_length': [],
                                  'best_fitness': [],
+                                 'best_score': [],
                                  'best_oob_fitness': [],
-                                 'generation_time': []}
+                                 'generation_time': []} 
 
         prior_generations = len(self._programs)
         n_more_generations = self.generations - prior_generations
@@ -593,6 +597,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             fitness = [program.raw_fitness_ for program in population]
             length = [program.length_ for program in population]
+            score = [program.extended_fitness_.get('score') for program in population]
 
             parsimony_coefficient = None
             if self.parsimony_coefficient == 'auto':
@@ -629,13 +634,18 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             self.run_details_['generation'].append(gen)
             self.run_details_['average_length'].append(np.mean(length))
             self.run_details_['average_fitness'].append(np.mean(fitness))
+            self.run_details_['average_score'].append(np.mean(score))
             self.run_details_['best_length'].append(best_program.length_)
             self.run_details_['best_fitness'].append(best_program.raw_fitness_)
+            self.run_details_['best_score'].append(best_program.extended_fitness_.get('score'))
+
             print(f"Best program: {best_program}")
-            oob_fitness = np.nan
+            oob_fitness = None
             if self.max_samples < 1.0:
                 oob_fitness = best_program.oob_fitness_
-            self.run_details_['best_oob_fitness'].append(oob_fitness)
+
+            self.run_details_['best_oob_fitness'].append(oob_fitness or np.nan)
+            
             generation_time = time() - start_time
             self.run_details_['generation_time'].append(generation_time)
 

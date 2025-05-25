@@ -205,6 +205,7 @@ class _Program(object):
         self.active_variables = self.find_active_variables()
         
         self.raw_fitness_ = None
+        self.extended_fitness_ = {}
         self.fitness_ = None
         self.parents = None
         self._n_samples = None
@@ -936,7 +937,7 @@ class _Program(object):
         else:
             # Create a directory for the checkpoints
             os.makedirs(checkpoint_folder)
-            dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','r2'])
+            dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','score'])
             new_id = 0
 
         if sample_weight is None:
@@ -1028,11 +1029,12 @@ class _Program(object):
             )
 
             # SBL - New learning rate finder
-            # if "lr" in self.optim_dict:
-            #     model.lr = self.optim_dict["lr"]
-            # else:
-            lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
-            model.lr = lr.suggestion()
+            if "lr" in self.optim_dict:
+                model.lr = self.optim_dict["lr"]
+            else:
+                model.lr = 1e-2 # Default starting point
+                lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
+                model.lr = lr.suggestion()
             
             # trainer.tune(model,train_dataloaders=train_dataloader) SBL - Doesn't exist in new versions of PL.
             
@@ -1069,22 +1071,27 @@ class _Program(object):
         w_numpy = sample_weight.cpu().numpy()
         w_numpy = w_numpy[val_indices]
 
+        extended_fitness = {}
+
         raw_fitness = self.metric(y_numpy, y_pred, w_numpy)
+        extended_fitness['raw_fitness'] = raw_fitness
+
         if self.optim_dict['task'] == 'regression':
-            r2 = r2_score(y_numpy, y_pred)
+            score = r2_score(y_numpy, y_pred)
         elif self.optim_dict['task'] == 'classification':
             logits = _sigmoid(y_pred)
-            r2 = roc_auc_score(y_numpy,logits)
+            score = roc_auc_score(y_numpy,logits)
         elif self.optim_dict['task'] == 'survival':
-            r2 = concordance_index_censored(estimate=y_pred, event_time=y_numpy, event_indicator=w_numpy>0)[0]
+            score = concordance_index_censored(estimate=y_pred, event_time=y_numpy, event_indicator=w_numpy>0)[0]
+        extended_fitness['score'] = score
         
         print(f"{self} | raw_fitness: {raw_fitness}")
 
-        new_row = pd.DataFrame({"id":[new_id],"equation":[str(self)],"raw_fitness":[raw_fitness],"r2":[r2]})
+        new_row = pd.DataFrame({"id":[new_id],"equation":[str(self)],"raw_fitness":[raw_fitness],"score":[score]})
         dictionary = pd.concat([dictionary,new_row],ignore_index=True)
         dictionary.to_csv(f"{checkpoint_folder}/dictionary.csv",index=False)
 
-        return raw_fitness
+        return extended_fitness
 
     def fitness(self, parsimony_coefficient=None):
         """Evaluate the penalized fitness of the program according to X, y.

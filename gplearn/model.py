@@ -92,7 +92,7 @@ class LitModel(pl.LightningModule):
         self.constructor_dict = self.optim_dict['constructor_dict']
         self.categorical_variables_dict = self.program.categorical_variables_dict
         self.categorical_variables = self.program.keys
-        self.lr = self.optim_dict['lr']
+        self.lr = self.optim_dict.get('lr', None)
 
         torch.manual_seed(self.seed)
 
