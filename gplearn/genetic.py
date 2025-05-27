@@ -13,8 +13,10 @@ import itertools
 from abc import ABCMeta, abstractmethod
 from time import time
 from warnings import warn
+from pathlib import Path
 
 import numpy as np
+import pandas as pd 
 from joblib import Parallel, delayed
 from scipy.stats import rankdata
 from sklearn.base import BaseEstimator
@@ -81,17 +83,33 @@ def check_cached_results(cached_results, program, categorical_variables):
         result = cached_results[hashable]
     return result
         
-def save_to_cached_results(cached_results, program, categorical_variables, fitness_dict):
+def save_to_cached_results(cached_results, program, categorical_variables, checkpoint_dir):
     program_list = program.program
     new_program_list = _transform(program_list, categorical_variables)
     hashable = tuple(new_program_list)
-    cached_results[hashable] = fitness_dict
+    cached_results[hashable] = program.raw_fitness_
+
+    # Save raw fitness to dictionary csv
+    new_row = pd.DataFrame([dict(
+        id=program.id,
+        equation=str(program),
+        raw_fitness=program.raw_fitness_
+    )])
+    dictionary_path = Path(checkpoint_dir) / 'dictionary.csv'
+    if dictionary_path.exists():
+        dictionary = pd.read_csv(dictionary_path, index_col=False)
+        dictionary = pd.concat([dictionary,new_row],ignore_index=True)
+    else:
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        dictionary = new_row 
+    
+    dictionary.to_csv(checkpoint_dir / "dictionary.csv",index=False)
+    
     print(len(cached_results))
-    print(f"Min error so far: {min([v.get('raw_fitness') for v in cached_results.values()])}")
-    # print(id(cached_results))
+    print(f"Min error so far: {min(cached_results.values())}")
         
 
-def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, cached_results):
+def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, cached_results, idx_start=0):
     """Private function used to build a batch of programs within a job."""
     n_samples, n_features = X.shape
     # Unpack parameters
@@ -111,6 +129,7 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
     optim_dict = params['optim_dict']
     ohe_matrices = params['ohe_matrices']
     timestamp = params['timestamp']
+    program_class = params['program_class']
 
     max_samples = int(max_samples * n_samples)
 
@@ -181,7 +200,7 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
             
             genome_to_print = genome
 
-        program = _Program(function_set=function_set,
+        program = program_class(function_set=function_set,
                            arities=arities,
                            init_depth=init_depth,
                            init_method=init_method,
@@ -195,7 +214,8 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
                            random_state=random_state,
                            program=program,
                            optim_dict=optim_dict,
-                           timestamp=timestamp)
+                           timestamp=timestamp,
+                           id=idx_start+i)
 
         program.parents = genome
 
@@ -206,12 +226,12 @@ def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params, ca
         cached = check_cached_results(cached_results, program,categorical_variables)
         if cached is not None:
             print(f"Retrieved score for {program}")
-            program.extended_fitness_ = cached
-            program.raw_fitness_ = program.extended_fitness_.get('raw_fitness')
+            program.raw_fitness_ = cached
         else:
-            program.extended_fitness_ = program.raw_fitness(X, y, sample_weight, ohe_matrices=ohe_matrices)
-            program.raw_fitness_ = program.extended_fitness_.get('raw_fitness')
-            save_to_cached_results(cached_results, program, categorical_variables, program.extended_fitness_)
+            checkpoint_folder = Path(optim_dict.get('checkpoint_folder', 'checkpoints')) / timestamp
+            program.fit(X, y, sample_weight, ohe_matrices=ohe_matrices)
+            program.raw_fitness_ = program.raw_fitness(X, y, sample_weight, ohe_matrices=ohe_matrices)
+            save_to_cached_results(cached_results, program, categorical_variables, checkpoint_folder)
 
         programs.append(program)
 
@@ -257,7 +277,8 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                  verbose=0,
                  random_state=None,
                  optim_dict=None,
-                 categorical_variables=[]):
+                 categorical_variables=[],
+                 program_class=_Program):
 
         self.population_size = population_size
         self.hall_of_fame = hall_of_fame
@@ -292,7 +313,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
         # self.lock = self.manager.Lock()
         # Create a shared dictionary using the manager
         self.cached_results = self.manager.dict()
-
+        self.program_class = program_class
 
 
     def _verbose_reporter(self, run_details=None):
@@ -351,7 +372,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
         
         return ohe_matrices
 
-    def fit(self, X, y, sample_weight=None):
+    def fit(self, X, y, sample_weight=None, generation_callback=None):
         """Fit the Genetic Program according to X, y.
 
         Parameters
@@ -528,9 +549,6 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
         X = torch.from_numpy(np.array(X)).float().to(device)
         y = torch.from_numpy(np.array(y)).float().to(device)
-        # print(params['ohe_matrices'])
-
-
 
         if not self.warm_start or not hasattr(self, '_programs'):
             # Free allocated memory, if any
@@ -538,10 +556,8 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             self.run_details_ = {'generation': [],
                                  'average_length': [],
                                  'average_fitness': [],
-                                 'average_score': [],
                                  'best_length': [],
                                  'best_fitness': [],
-                                 'best_score': [],
                                  'best_oob_fitness': [],
                                  'generation_time': []} 
 
@@ -589,7 +605,9 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                                           y,
                                           sample_weight,
                                           seeds[starts[i]:starts[i + 1]],
-                                          params,self.cached_results)
+                                          params,
+                                          self.cached_results, 
+                                          gen * self.population_size + sum(n_programs[:i]))
                 for i in range(n_jobs))
 
             # Reduce, maintaining order across different n_jobs
@@ -597,7 +615,6 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             fitness = [program.raw_fitness_ for program in population]
             length = [program.length_ for program in population]
-            score = [program.extended_fitness_.get('score') for program in population]
 
             parsimony_coefficient = None
             if self.parsimony_coefficient == 'auto':
@@ -634,10 +651,8 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             self.run_details_['generation'].append(gen)
             self.run_details_['average_length'].append(np.mean(length))
             self.run_details_['average_fitness'].append(np.mean(fitness))
-            self.run_details_['average_score'].append(np.mean(score))
             self.run_details_['best_length'].append(best_program.length_)
             self.run_details_['best_fitness'].append(best_program.raw_fitness_)
-            self.run_details_['best_score'].append(best_program.extended_fitness_.get('score'))
 
             print(f"Best program: {best_program}")
             oob_fitness = None
@@ -651,6 +666,9 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
             if self.verbose:
                 self._verbose_reporter(self.run_details_)
+
+            if generation_callback is not None:
+                generation_callback(population, best_program)
 
             # Check for early stopping
             if self._metric.greater_is_better:
@@ -703,9 +721,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
             
             # If the score was cached then we need to train the final model
             if self._program.model is None:
-                self._program.raw_fitness(X,
-                                          y,
-                                          sample_weight,params['ohe_matrices'])
+                self._program.fit(X, y, sample_weight,params['ohe_matrices'])
 
         return self
     
@@ -951,7 +967,8 @@ class SymbolicRegressor(BaseSymbolic, RegressorMixin):
                  verbose=0,
                  random_state=None,
                  optim_dict=None,
-                 categorical_variables=[]):
+                 categorical_variables=[],
+                 program_class=_Program):
         super(SymbolicRegressor, self).__init__(
             population_size=population_size,
             generations=generations,
@@ -976,7 +993,8 @@ class SymbolicRegressor(BaseSymbolic, RegressorMixin):
             verbose=verbose,
             random_state=random_state,
             optim_dict=optim_dict,
-            categorical_variables=categorical_variables)
+            categorical_variables=categorical_variables,
+            program_class=program_class)
 
     def __str__(self):
         """Overloads `print` output of the object to resemble a LISP tree."""

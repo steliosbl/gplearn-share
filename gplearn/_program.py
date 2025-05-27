@@ -12,6 +12,7 @@ computer program. It is used for creating and evolving programs used in the
 from copy import copy
 import os
 import warnings
+from pathlib import Path 
 
 import numpy as np
 from sklearn.utils.random import sample_without_replacement
@@ -30,6 +31,7 @@ import pytorch_lightning as pl
 
 
 import torch
+from torch.utils.data import TensorDataset, DataLoader, random_split
 
 import time
 
@@ -161,7 +163,8 @@ class _Program(object):
                  program=None,
                  function_probs=None,
                  optim_dict=None,
-                 timestamp="unknown"):
+                 timestamp="unknown",
+                 id=0):
 
         self.function_set = function_set
         self.arities = arities
@@ -179,6 +182,7 @@ class _Program(object):
         self.model = None
         self.optim_dict = optim_dict
         self.timestamp = timestamp
+        self.id = id
 
         if self.function_probs is None:
             # Uniform distribution over all functions
@@ -899,6 +903,93 @@ class _Program(object):
                     return True
         return False
 
+    def fit(self, X, y, sample_weight=None, ohe_matrices={}, checkpoint_id=None):
+        if not self.is_fitting_necessary(ohe_matrices.keys()):
+            return self 
+        
+        checkpoint_id = checkpoint_id or self.id
+        
+        checkpoint_folder = Path(self.optim_dict.get('checkpoint_folder', 'checkpoints')) / self.timestamp
+
+        if sample_weight is None:
+            sample_weight = torch.ones_like(y)
+
+        self.keys = sorted(ohe_matrices.keys())
+        self.categorical_variables_dict = {k:ohe_matrices[k].shape[1] for k in self.keys}
+
+        model = LitModel(self,seed=0)
+
+        dataset = TensorDataset(X,*[ohe_matrices[k] for k in self.keys],y, sample_weight)
+
+        train_size = int(0.8 * len(dataset))
+        val_size = len(dataset) - train_size
+        gen = torch.Generator().manual_seed(self.optim_dict['seed'])
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=gen)
+    
+        train_dataloader, val_dataloader = (
+            DataLoader(train_dataset, batch_size=self.optim_dict['batch_size'], shuffle=True, num_workers=self.optim_dict['num_workers_dataloader'], generator=gen),
+            DataLoader(val_dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'], generator=gen)
+        )
+
+        patience = self.optim_dict.get('patience',10)
+
+        early_stopping = pl.callbacks.EarlyStopping('val_loss', patience=patience, min_delta=self.optim_dict['tol'])
+        lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
+        
+        if self.optim_dict.get('early_stopping_val_loss',True):
+            checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                                monitor='val_loss',
+                                dirpath=checkpoint_folder,
+                                filename=f'{checkpoint_id}-best_val_loss',
+                                save_top_k=1,
+                                mode='min',
+                                auto_insert_metric_name=True)
+            callbacks = [early_stopping, lr_monitor, checkpoint_callback]
+        else:
+            checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                                monitor='train_loss',
+                                dirpath=checkpoint_folder,
+                                filename=f'{checkpoint_id}-best_val_loss',
+                                save_top_k=1,
+                                mode='min',
+                                auto_insert_metric_name=True)
+            callbacks = [lr_monitor, checkpoint_callback]
+
+        logger = pl.loggers.TensorBoardLogger("data/tb_logs", name=f"{self.timestamp}/{checkpoint_id}")
+
+        trainer = pl.Trainer(
+            default_root_dir='data/lightning_logs', 
+            logger=logger, 
+            deterministic=True, 
+            devices=1, 
+            check_val_every_n_epoch=self.optim_dict.get('check_val_every_n_epoch',10), 
+            callbacks=callbacks,
+            enable_model_summary = False, 
+            enable_progress_bar=self.optim_dict.get('enable_progress_bar', False), 
+            log_every_n_steps=1, 
+            accelerator="gpu" if self.optim_dict['device'] == 'cuda' else 'cpu', 
+            max_epochs=self.optim_dict['max_n_epochs']
+        )
+
+        # SBL - New learning rate finder
+        if "lr" in self.optim_dict:
+            model.lr = self.optim_dict["lr"]
+        else:
+            model.lr = 1e-2 # Default starting point
+            lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
+            model.lr = lr.suggestion()
+        
+        trainer.fit(model=model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+
+        # Load the best model
+        self.model = LitModel.load_from_checkpoint(f"{checkpoint_folder}/{checkpoint_id}-best_val_loss.ckpt", program=self)
+
+        if not self.optim_dict.get('keep_models', False):
+            os.remove(f"{checkpoint_folder}/{checkpoint_id}-best_val_loss.ckpt")
+            
+        return self 
+
+
     def raw_fitness(self, X, y, sample_weight=None, ohe_matrices={}):
         """Evaluate the raw fitness of the program according to X, y.
 
@@ -920,178 +1011,42 @@ class _Program(object):
             The raw fitness of the program.
 
         """
-        if 'checkpoint_folder' in self.optim_dict:
-            checkpoint_folder = os.path.join(self.optim_dict['checkpoint_folder'],self.timestamp)
-        else:
-            checkpoint_folder = os.path.join("checkpoints",self.timestamp)
+        y_pred = self.predict(X, ohe_matrices=ohe_matrices)
 
-        if 'enable_progress_bar' in self.optim_dict:
-            enable_progress_bar = self.optim_dict['enable_progress_bar']
-        else:
-            enable_progress_bar = False
-
-        # Check if the file checkpoints/{self.timestamp}/dictionary.csv exists
-        if os.path.isfile(f"{checkpoint_folder}/dictionary.csv"):
-            dictionary = pd.read_csv(f"{checkpoint_folder}/dictionary.csv",index_col=False)
-            new_id = dictionary['id'].max() + 1
-        else:
-            # Create a directory for the checkpoints
-            os.makedirs(checkpoint_folder)
-            dictionary = pd.DataFrame(columns=['id','equation','raw_fitness','score'])
-            new_id = 0
-
-        if sample_weight is None:
-            sample_weight = torch.ones_like(y)
+        if isinstance(y, torch.Tensor):
+            y = y.cpu().numpy() 
+        if isinstance(sample_weight, torch.Tensor):
+            sample_weight = sample_weight.cpu().numpy()
         
-        # Create train val split
+        return self.metric(y, y_pred, sample_weight)
 
-        # Create indices for train and val using numpy generator
-        gen = np.random.default_rng(self.optim_dict['seed'])
-        indices = np.arange(X.shape[0])
-        gen.shuffle(indices)
-        train_size = int(0.8 * X.shape[0])
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:]
-
+    def predict(self, X, ohe_matrices={}):
         if not self.is_fitting_necessary(ohe_matrices.keys()):
-            y_pred = self.execute(X[val_indices,:])
-        else: # You need to do training
-            
-            # model = Model(self,self.optim_dict,seed=0)
-
-            # model.train(X,y,ohe_matrices,device=self.optim_dict['device'])
-            # # t1 = time.time()
-            # y_pred = model.predict(X,ohe_matrices,device=self.optim_dict['device']).cpu().detach().numpy()
-            # # t2 = time.time()
-            # # print(f"Whole predicting: {t2-t1}")
-
-            self.keys = sorted(ohe_matrices.keys())
-            self.categorical_variables_dict = {k:ohe_matrices[k].shape[1] for k in self.keys}
-
-            model = LitModel(self,seed=0)
-
-            dataset = torch.utils.data.TensorDataset(X,*[ohe_matrices[k] for k in self.keys],y, sample_weight)
-
-            train_size = int(0.8 * len(dataset))
-            val_size = len(dataset) - train_size
-
-            gen = torch.Generator()
-            gen.manual_seed(self.optim_dict['seed'])
-
-            # Subsample using train and val indices
-            train_dataset = torch.utils.data.Subset(dataset,train_indices)
-            val_dataset = torch.utils.data.Subset(dataset,val_indices)
-        
-            # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size], generator=gen)
-
-            train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.optim_dict['batch_size'], shuffle=True, num_workers=self.optim_dict['num_workers_dataloader'],generator=gen)
-            val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'],generator=gen)
-            
-            accelerator = "gpu" if self.optim_dict['device'] == 'cuda' else 'cpu'
-
-            # torch.set_float32_matmul_precision("medium")
-            patience = self.optim_dict.get('patience',10)
-            check_val_every_n_epoch = self.optim_dict.get('check_val_every_n_epoch',10)
-
-            early_stopping = pl.callbacks.EarlyStopping('val_loss',patience=patience,min_delta=self.optim_dict['tol'])
-            lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='epoch')
-            
-            early_stopping_val_loss = self.optim_dict.get('early_stopping_val_loss',True)
-
-            if early_stopping_val_loss:
-                checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                                    monitor='val_loss',
-                                    dirpath=checkpoint_folder,
-                                    filename=f'{new_id}-best_val_loss',
-                                    save_top_k=1,
-                                    mode='min',
-                                    auto_insert_metric_name=True)
-                callbacks = [early_stopping,lr_monitor,checkpoint_callback]
-            else:
-                checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                                    monitor='train_loss',
-                                    dirpath=checkpoint_folder,
-                                    filename=f'{new_id}-best_val_loss',
-                                    save_top_k=1,
-                                    mode='min',
-                                    auto_insert_metric_name=True)
-                callbacks = [lr_monitor,checkpoint_callback]
-
-
-            logger = pl.loggers.TensorBoardLogger("data/tb_logs", name=f"{self.timestamp}/{new_id}")
-
-
-            trainer = pl.Trainer(
-                default_root_dir='data/lightning_logs',logger=logger,deterministic=True,devices=1,check_val_every_n_epoch=check_val_every_n_epoch,callbacks=callbacks,
-                # auto_lr_find=True, # SBL - Doesn't exist in new versions of PL. 
-                # auto_scale_batch_size=False, # SBL - Doesn't exist in new versions of PL. 
-                enable_model_summary = False,enable_progress_bar=enable_progress_bar,log_every_n_steps=1,accelerator=accelerator,max_epochs=self.optim_dict['max_n_epochs']
-            )
-
-            # SBL - New learning rate finder
-            if "lr" in self.optim_dict:
-                model.lr = self.optim_dict["lr"]
-            else:
-                model.lr = 1e-2 # Default starting point
-                lr = pl.tuner.Tuner(trainer).lr_find(model, train_dataloaders=train_dataloader)
-                model.lr = lr.suggestion()
-            
-            # trainer.tune(model,train_dataloaders=train_dataloader) SBL - Doesn't exist in new versions of PL.
-            
-            trainer.fit(model=model,train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-
-            # Load the best model
-            model = LitModel.load_from_checkpoint(f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt", program=self)
-
-            self.model = model
-
-            # val_loss = trainer.callback_metrics['val_loss'].item()
-            # print(f"val loss: {val_loss}")
-
-            # pred_dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.optim_dict['batch_size'], shuffle=False, num_workers=self.optim_dict['num_workers_dataloader'])
-
-            y_pred = torch.concat(trainer.predict(model, val_dataloader)).cpu().numpy()
-
-            if 'keep_models' in self.optim_dict.keys():
-                keep_the_model = self.optim_dict['keep_models']
-            else:
-                keep_the_model = False
-            if not keep_the_model:
-                # Delete the model
-                os.remove(f"{checkpoint_folder}/{new_id}-best_val_loss.ckpt")
-      
-            
-            # return val_loss
+            y_pred = self.execute(X)
+        elif self.model is None:
+            raise ValueError("The model was not trained. Call fit method first")
+        else:
+            y_pred = self.execute(X, ohe_matrices)
 
         if self.transformer:
             y_pred = self.transformer(y_pred)
 
-        y_numpy = y.cpu().numpy()
-        y_numpy = y_numpy[val_indices]
-        w_numpy = sample_weight.cpu().numpy()
-        w_numpy = w_numpy[val_indices]
+        return y_pred
 
-        extended_fitness = {}
+    def score(self, X, y, sample_weight=None, ohe_matrices={}):
+        y_pred = self.predict(X, ohe_matrices=ohe_matrices)
 
-        raw_fitness = self.metric(y_numpy, y_pred, w_numpy)
-        extended_fitness['raw_fitness'] = raw_fitness
-
-        if self.optim_dict['task'] == 'regression':
-            score = r2_score(y_numpy, y_pred)
-        elif self.optim_dict['task'] == 'classification':
-            logits = _sigmoid(y_pred)
-            score = roc_auc_score(y_numpy,logits)
-        elif self.optim_dict['task'] == 'survival':
-            score = concordance_index_censored(estimate=y_pred, event_time=y_numpy, event_indicator=w_numpy>0)[0]
-        extended_fitness['score'] = score
+        if isinstance(y, torch.Tensor):
+            y = y.cpu().numpy() 
+        if isinstance(sample_weight, torch.Tensor):
+            sample_weight = sample_weight.cpu().numpy()
         
-        print(f"{self} | raw_fitness: {raw_fitness}")
-
-        new_row = pd.DataFrame({"id":[new_id],"equation":[str(self)],"raw_fitness":[raw_fitness],"score":[score]})
-        dictionary = pd.concat([dictionary,new_row],ignore_index=True)
-        dictionary.to_csv(f"{checkpoint_folder}/dictionary.csv",index=False)
-
-        return extended_fitness
+        if self.optim_dict['task'] == 'regression':
+            return dict(r2=r2_score(y, y_pred))
+        elif self.optim_dict['task'] == 'classification':
+            return dict(roc_auc=roc_auc_score(y, _sigmoid(y_pred)))
+        elif self.optim_dict['task'] == 'survival':
+            return dict(c_censored=concordance_index_censored(estimate=y_pred, event_time=y, event_indicator=sample_weight>0)[0])
 
     def fitness(self, parsimony_coefficient=None):
         """Evaluate the penalized fitness of the program according to X, y.
