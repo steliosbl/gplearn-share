@@ -668,7 +668,7 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
                 self._verbose_reporter(self.run_details_)
 
             if generation_callback is not None:
-                generation_callback(population, best_program)
+                generation_callback(population, best_program, gen)
 
             # Check for early stopping
             if self._metric.greater_is_better:
